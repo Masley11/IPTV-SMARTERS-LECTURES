@@ -10,6 +10,7 @@ const $ = (id) => document.getElementById(id);
 const state = {
   categories: [],
   streams: [],
+  account: null,
   selected: 'all',
   query: '',
   visible: 40,
@@ -20,10 +21,14 @@ const state = {
   mpegts: null,
   reconnectTimer: null,
   playToken: 0,
+  lastLocalPlayAt: 0,
+  localStreaming: false,
   current: null,
   loading: false
 };
 const icons = ['◈', '▣', '◉', '✦', '◇', '▤', '◎'];
+
+const MAX_CONN_MESSAGE = 'Limite atteinte (1/1 connexion active) : une chaîne est déjà en cours de lecture sur un autre appareil (ex. IPTV Smarters Pro). Arrêtez simplement la lecture vidéo sur l’autre appareil (inutile de déconnecter le compte) puis cliquez sur Réessayer.';
 
 function readCredentials() {
   try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}') }; }
@@ -50,6 +55,28 @@ async function requestJSON(url) {
   if (!response.ok) throw new Error(data.error || 'Connexion impossible.');
   return data;
 }
+function updateSubtitle(itemsCount) {
+  const count = typeof itemsCount === 'number' ? itemsCount : filtered().length;
+  let text = count.toLocaleString('fr-FR') + ' chaîne' + (count > 1 ? 's' : '') + ' disponible' + (count > 1 ? 's' : '');
+  if (state.account && state.account.maxConnections > 0) {
+    const { activeConnections, maxConnections } = state.account;
+    if (activeConnections >= maxConnections && !state.localStreaming) {
+      text += ` · ⚠ ${activeConnections}/${maxConnections} connexion utilisée sur un autre appareil`;
+    } else {
+      text += ` · Connexion libre (${activeConnections}/${maxConnections} active)`;
+    }
+  }
+  $('list-subtitle').textContent = text;
+}
+async function refreshAccount() {
+  try {
+    state.account = await requestJSON(params('account'));
+    if (!state.loading && state.streams.length) updateSubtitle();
+    return state.account;
+  } catch {
+    return null;
+  }
+}
 function setStatus(message, title = '', retry = false) {
   const box = $('status');
   box.replaceChildren();
@@ -69,14 +96,19 @@ async function load() {
     const config = await requestJSON('/api/iptv?action=config');
     state.configuredServer = normalizeServer(config.server);
     if (normalizeServer(state.credentials.server) !== state.configuredServer) throw new Error('Ce déploiement utilise ' + state.configuredServer + '. Modifiez XTREAM_SERVER sur Vercel ou rétablissez cette adresse dans les paramètres.');
-    const [categories, streams] = await Promise.all([requestJSON(params('categories')), requestJSON(params('streams'))]);
+    const [categories, streams, account] = await Promise.all([
+      requestJSON(params('categories')),
+      requestJSON(params('streams')),
+      requestJSON(params('account')).catch(() => null)
+    ]);
     if (!Array.isArray(categories) || !Array.isArray(streams)) throw new Error('Catalogue invalide : vérifiez vos identifiants Xtream Codes.');
     state.categories = categories.filter(item => item && item.category_id != null);
     state.streams = streams.filter(item => item && /^\d+$/.test(String(item.stream_id)));
+    state.account = account;
     renderCategories();
     renderChannels();
   } catch (error) {
-    state.categories = []; state.streams = [];
+    state.categories = []; state.streams = []; state.account = null;
     renderCategories();
     $('result-count').textContent = '0'; $('list-subtitle').textContent = 'Connexion indisponible';
     setStatus(error.message, 'Impossible de charger les chaînes', true);
@@ -103,7 +135,7 @@ function renderCategories() {
     button.setAttribute('aria-pressed', String(state.selected === id));
     const icon = document.createElement('span'); icon.className = 'category-icon'; icon.textContent = icons[index % icons.length];
     const name = document.createElement('span'); name.className = 'category-name'; name.textContent = item.category_name || 'Sans nom';
-    const number = document.createElement('span'); name.className = 'category-number'; number.textContent = item.count;
+    const number = document.createElement('span'); number.className = 'category-number'; number.textContent = item.count;
     button.append(icon, name, number); button.addEventListener('click', () => chooseCategory(id)); nav.append(button);
     const chip = document.createElement('button'); chip.type = 'button'; chip.className = state.selected === id ? 'selected' : '';
     chip.setAttribute('aria-pressed', String(state.selected === id)); chip.textContent = item.category_name || 'Sans nom';
@@ -113,7 +145,7 @@ function renderCategories() {
 function renderChannels() {
   const items = filtered(); const grid = $('channel-grid'); grid.replaceChildren();
   $('result-count').textContent = items.length.toLocaleString('fr-FR');
-  $('list-subtitle').textContent = items.length + ' chaîne' + (items.length > 1 ? 's' : '') + ' disponible' + (items.length > 1 ? 's' : '');
+  updateSubtitle(items.length);
   if (!items.length) {
     grid.hidden = true; $('pagination').hidden = true;
     setStatus(state.streams.length ? 'Essayez une autre recherche ou une autre catégorie.' : 'Aucune chaîne disponible pour ces identifiants.', state.streams.length ? 'Aucun résultat' : 'Catalogue vide');
@@ -160,6 +192,10 @@ function setMode(nextMode) {
 }
 
 function destroyEngines() {
+  if (state.localStreaming) {
+    state.lastLocalPlayAt = Date.now();
+    state.localStreaming = false;
+  }
   if (state.reconnectTimer) {
     clearTimeout(state.reconnectTimer);
     state.reconnectTimer = null;
@@ -206,6 +242,17 @@ function showPlayerMessage(text, retryable = false) {
   }
 }
 
+function zappingParam() {
+  return Date.now() - state.lastLocalPlayAt < 18000 ? { zapping: '1' } : {};
+}
+
+function formatMaxConnMessage(account) {
+  if (account && account.maxConnections > 0 && account.activeConnections >= account.maxConnections) {
+    return `Limite atteinte (${account.activeConnections}/${account.maxConnections} connexion active) : une chaîne est déjà en cours de lecture sur un autre appareil (ex. IPTV Smarters Pro). Arrêtez simplement la lecture vidéo sur l’autre appareil (inutile de déconnecter le compte) puis cliquez sur Réessayer.`;
+  }
+  return MAX_CONN_MESSAGE;
+}
+
 function startMpegTs(item, token, fromFallback = false) {
   if (token !== state.playToken) return;
   destroyEngines();
@@ -218,7 +265,7 @@ function startMpegTs(item, token, fromFallback = false) {
   showPlayerMessage(fromFallback ? 'Passage automatique en flux direct MPEG-TS...' : 'Connexion au flux direct MPEG-TS...');
 
   const video = $('video');
-  const url = params('ts', { id: item.stream_id, _t: Date.now() });
+  const url = params('ts', { id: item.stream_id, ...zappingParam(), _t: Date.now() });
   const player = window.mpegts.createPlayer(
     { type: 'mpegts', isLive: true, cors: true, url },
     {
@@ -238,6 +285,8 @@ function startMpegTs(item, token, fromFallback = false) {
   const markPlaying = () => {
     if (token !== state.playToken) return;
     hasPlayed = true;
+    state.localStreaming = true;
+    state.lastLocalPlayAt = Date.now();
     showPlayerMessage('');
   };
   video.addEventListener('playing', markPlaying, { once: true });
@@ -250,6 +299,17 @@ function startMpegTs(item, token, fromFallback = false) {
       return;
     }
     const statusCode = errorInfo && errorInfo.code;
+    if (statusCode === 429) {
+      refreshAccount().then((acc) => {
+        if (token === state.playToken) showPlayerMessage(formatMaxConnMessage(acc), true);
+      });
+      showPlayerMessage(formatMaxConnMessage(state.account), true);
+      return;
+    }
+    if (statusCode === 403) {
+      showPlayerMessage('Ce compte IPTV est inactif ou expiré chez le fournisseur.', true);
+      return;
+    }
     const msg = statusCode === 502
       ? 'Cette chaîne est actuellement hors antenne ou indisponible chez le fournisseur (ex. chaîne événementielle hors match).'
       : 'Lecture impossible sur cette chaîne (' + (errorDetail || errorType || 'flux indisponible') + ').';
@@ -284,7 +344,7 @@ function startHls(item, token, allowFallback) {
   $('player-subtitle').textContent = 'Direct HLS · ' + label;
   showPlayerMessage('Connexion au direct...');
 
-  const url = params('play', { id: item.stream_id });
+  const url = params('play', { id: item.stream_id, ...zappingParam() });
   const video = $('video');
 
   if (window.Hls && Hls.isSupported()) {
@@ -306,6 +366,8 @@ function startHls(item, token, allowFallback) {
     hls.on(Hls.Events.MANIFEST_PARSED, () => {
       if (token !== state.playToken) return;
       manifestReady = true;
+      state.localStreaming = true;
+      state.lastLocalPlayAt = Date.now();
       showPlayerMessage('');
       video.play().catch(() => showPlayerMessage('Appuyez sur ▶ pour lancer la lecture.'));
     });
@@ -314,6 +376,20 @@ function startHls(item, token, allowFallback) {
       if (token !== state.playToken || !data.fatal) return;
       if (data.type === Hls.ErrorTypes.MEDIA_ERROR && manifestReady) {
         hls.recoverMediaError();
+        return;
+      }
+      const httpCode = data.response && data.response.code;
+      if (httpCode === 429) {
+        destroyEngines();
+        refreshAccount().then((acc) => {
+          if (token === state.playToken) showPlayerMessage(formatMaxConnMessage(acc), true);
+        });
+        showPlayerMessage(formatMaxConnMessage(state.account), true);
+        return;
+      }
+      if (httpCode === 403) {
+        destroyEngines();
+        showPlayerMessage('Ce compte IPTV est inactif ou expiré chez le fournisseur.', true);
         return;
       }
       if (allowFallback && mpegtsSupported()) {
@@ -327,8 +403,14 @@ function startHls(item, token, allowFallback) {
   }
 
   if (video.canPlayType('application/vnd.apple.mpegurl')) {
-    const onNativeError = () => {
+    const onNativeError = async () => {
       if (token !== state.playToken) return;
+      const acc = await refreshAccount();
+      if (token !== state.playToken) return;
+      if (acc && acc.maxConnections > 0 && acc.activeConnections >= acc.maxConnections) {
+        showPlayerMessage(formatMaxConnMessage(acc), true);
+        return;
+      }
       if (allowFallback && mpegtsSupported()) {
         startMpegTs(item, token, true);
       } else {
@@ -336,6 +418,12 @@ function startHls(item, token, allowFallback) {
       }
     };
     video.addEventListener('error', onNativeError, { once: true });
+    video.addEventListener('playing', () => {
+      if (token === state.playToken) {
+        state.localStreaming = true;
+        state.lastLocalPlayAt = Date.now();
+      }
+    }, { once: true });
     video.src = url;
     video.play().catch(() => showPlayerMessage('Appuyez sur ▶ pour lancer la lecture.'));
     return;
@@ -369,6 +457,7 @@ function play(item, keepFullscreen = false) {
 function closePlayer() {
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   destroyPlayback(); state.current = null; $('player-overlay').hidden = true; document.body.style.overflow = ''; $('search').focus();
+  setTimeout(() => refreshAccount(), 2000);
 }
 function openSettings() {
   $('server-input').value = state.credentials.server; $('username-input').value = state.credentials.username; $('password-input').value = state.credentials.password;

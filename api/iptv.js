@@ -160,7 +160,9 @@ async function upstreamFetch(initialPath, options = {}) {
 
   const timeoutMs = options.connectTimeoutMs || 20000;
   const externalSignal = options.signal;
-  const retryDelays = options.retryTransientLock ? [1200, 1800, 2200, 2500] : [];
+  const retryDelays = Array.isArray(options.retryDelays)
+    ? options.retryDelays
+    : (options.retryTransientLock ? [1200, 1800, 2200, 2500] : []);
 
   for (let hop = 0; hop < 6; hop++) {
     let attempt = 0;
@@ -202,6 +204,60 @@ function credentials(query) {
     throw new Error('Identifiants invalides');
   }
   return { username, password };
+}
+
+async function fetchAccountInfo(base, auth, signal) {
+  try {
+    const api = new URL('/player_api.php', base);
+    api.searchParams.set('username', auth.username);
+    api.searchParams.set('password', auth.password);
+    const { response } = await upstreamFetch(api.href, { signal, connectTimeoutMs: 6000 });
+    if (!response.ok) return null;
+    const data = await response.json();
+    const info = data && data.user_info;
+    if (!info || typeof info !== 'object') return null;
+    const active = Number(info.active_cons ?? 0);
+    const max = Number(info.max_connections ?? 0);
+    return {
+      status: String(info.status || ''),
+      activeConnections: Number.isFinite(active) ? active : 0,
+      maxConnections: Number.isFinite(max) ? max : 0,
+      expDate: info.exp_date ? String(info.exp_date) : null
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function diagnoseAuthRejection(base, auth, upstreamStatus, signal) {
+  if ([401, 403, 429, 458].includes(upstreamStatus)) {
+    const info = await fetchAccountInfo(base, auth, signal);
+    if (info) {
+      if (info.status && info.status.toLowerCase() !== 'active') {
+        return {
+          status: 403,
+          message: `Ce compte IPTV est inactif ou expiré (statut : ${info.status}).`,
+          extra: { code: 'ACCOUNT_INACTIVE', accountStatus: info.status }
+        };
+      }
+      if (info.maxConnections > 0 && info.activeConnections >= info.maxConnections) {
+        return {
+          status: 429,
+          message: `Limite atteinte (${info.activeConnections}/${info.maxConnections} connexion active) : une chaîne est déjà en cours de lecture sur un autre appareil (ex. IPTV Smarters Pro). Arrêtez la lecture sur l’autre appareil puis réessayez.`,
+          extra: {
+            code: 'MAX_CONNECTIONS',
+            activeConnections: info.activeConnections,
+            maxConnections: info.maxConnections
+          }
+        };
+      }
+    }
+  }
+  return {
+    status: 502,
+    message: `Le serveur IPTV a répondu ${upstreamStatus || 502}`,
+    extra: { code: 'UPSTREAM_ERROR', upstreamStatus }
+  };
 }
 
 function playbackURL(query, targetHref, extra = {}) {
@@ -363,6 +419,15 @@ module.exports = async function handler(req, res) {
 
     const auth = credentials({ username: query.get('username'), password: query.get('password') });
     const id = query.get('id');
+    const isZapping = query.get('zapping') === '1';
+    const lockRetries = isZapping ? [1200, 1800, 2200, 2500] : [1100];
+
+    if (action === 'account') {
+      const info = await fetchAccountInfo(base, auth, requestAbort.signal);
+      if (!info) return fail(res, 502, 'Impossible de lire l’état du compte IPTV');
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      return res.end(JSON.stringify(info));
+    }
 
     if (action === 'categories' || action === 'streams') {
       const api = new URL('/player_api.php', base);
@@ -393,7 +458,7 @@ module.exports = async function handler(req, res) {
         const result = await upstreamFetch(candidate, {
           signal: requestAbort.signal,
           connectTimeoutMs: 15000,
-          retryTransientLock: true
+          retryDelays: lockRetries
         });
         lastStatus = result.response.status;
         if (result.response.ok) {
@@ -403,7 +468,10 @@ module.exports = async function handler(req, res) {
         try { await result.response.body?.cancel(); } catch { /* ignore */ }
         if (![400, 404].includes(lastStatus)) break;
       }
-      if (!upstream) return fail(res, 502, `Le serveur IPTV a répondu ${lastStatus || 502}`);
+      if (!upstream) {
+        const diag = await diagnoseAuthRejection(base, auth, lastStatus, requestAbort.signal);
+        return fail(res, diag.status, diag.message, diag.extra);
+      }
 
       let firstByteTimer;
       const { head, reader, done } = await Promise.race([
@@ -451,7 +519,7 @@ module.exports = async function handler(req, res) {
       allowExternal,
       signal: requestAbort.signal,
       connectTimeoutMs: 15000,
-      retryTransientLock: action === 'play',
+      retryDelays: action === 'play' ? lockRetries : [],
       returnRedirectTarget: action === 'play'
     });
 
@@ -462,7 +530,12 @@ module.exports = async function handler(req, res) {
     }
 
     const { response, finalURL } = fetched;
-    if (!response.ok) return fail(res, 502, `Le serveur IPTV a répondu ${response.status}`);
+    if (!response.ok) {
+      const diag = action === 'play'
+        ? await diagnoseAuthRejection(base, auth, response.status, requestAbort.signal)
+        : { status: 502, message: `Le serveur IPTV a répondu ${response.status}`, extra: {} };
+      return fail(res, diag.status, diag.message, diag.extra);
+    }
 
     const contentType = response.headers.get('content-type') || '';
     const { head, reader, done } = await peekBody(response.body, 512);

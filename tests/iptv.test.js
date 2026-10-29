@@ -5,8 +5,9 @@ const http = require('node:http');
 function listen(server) { return new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve(server.address().port))); }
 function close(server) { return new Promise(resolve => server.close(resolve)); }
 
-test('catalogue, redirection load-balancer HLS signée, flux MPEG-TS et garde-fou SSRF', async () => {
+test('catalogue, compte 1/1 max_connections, redirection load-balancer HLS signée, flux MPEG-TS et garde-fou SSRF', async () => {
   let edgePort = 0;
+  let activeCons = '0';
 
   // Simulated external Xtream load-balancer / edge streaming node on a separate origin (port)
   const edge = http.createServer((req, res) => {
@@ -36,7 +37,22 @@ test('catalogue, redirection load-balancer HLS signée, flux MPEG-TS et garde-fo
     if (req.url.startsWith('/player_api.php')) {
       const query = new URL(req.url, 'http://localhost').searchParams;
       res.setHeader('Content-Type', 'application/json');
+      if (!query.get('action')) {
+        return res.end(JSON.stringify({
+          user_info: {
+            username: 'test',
+            status: 'Active',
+            active_cons: activeCons,
+            max_connections: '1',
+            exp_date: '1795267007'
+          }
+        }));
+      }
       return res.end(JSON.stringify(query.get('action') === 'get_live_categories' ? [{ category_id: '1', category_name: 'Infos' }] : [{ stream_id: 42, name: 'Info TV' }]));
+    }
+    if (req.url.endsWith('/99.m3u8')) {
+      res.writeHead(401).end();
+      return;
     }
     if (req.url.endsWith('/42.m3u8')) {
       res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
@@ -47,7 +63,6 @@ test('catalogue, redirection load-balancer HLS signée, flux MPEG-TS et garde-fo
       return res.end();
     }
     if (req.url.endsWith('/88.m3u8')) {
-      // Upstream sends raw MPEG-TS instead of m3u8
       res.setHeader('Content-Type', 'video/mp2t');
       const packet = Buffer.alloc(190, 0x22);
       packet[0] = 0x47;
@@ -69,12 +84,20 @@ test('catalogue, redirection load-balancer HLS signée, flux MPEG-TS et garde-fo
   const gatewayPort = await listen(gateway);
   const base = `http://127.0.0.1:${gatewayPort}/api/iptv?username=test&password=secret`;
   try {
-    // 1. Catalogue
+    // 1. Catalogue + Account info
     const categories = await fetch(base + '&action=categories');
     assert.equal(categories.status, 200);
     assert.deepEqual(await categories.json(), [{ category_id: '1', category_name: 'Infos' }]);
     const streams = await fetch(base + '&action=streams');
     assert.equal((await streams.json())[0].stream_id, 42);
+    const account = await fetch(base + '&action=account');
+    assert.equal(account.status, 200);
+    assert.deepEqual(await account.json(), {
+      status: 'Active',
+      activeConnections: 0,
+      maxConnections: 1,
+      expDate: '1795267007'
+    });
 
     // 2. Same-origin HLS
     const playlist = await fetch(base + '&action=play&id=42');
@@ -107,7 +130,16 @@ test('catalogue, redirection load-balancer HLS signée, flux MPEG-TS et garde-fo
     assert.equal(tsBuf[0], 0x47);
     assert.equal(tsBuf.length, 190);
 
-    // 5. SSRF / unsigned external host rejection
+    // 5. Detection of max_connections: 1 already occupied on another device (429 MAX_CONNECTIONS)
+    activeCons = '1';
+    const busy = await fetch(base + '&action=play&id=99');
+    assert.equal(busy.status, 429);
+    const busyJson = await busy.json();
+    assert.equal(busyJson.code, 'MAX_CONNECTIONS');
+    assert.equal(busyJson.activeConnections, 1);
+    assert.equal(busyJson.maxConnections, 1);
+
+    // 6. SSRF / unsigned external host rejection
     const external = await fetch(base + '&action=resource&id=' + encodeURIComponent('http://example.com/anything'));
     assert.equal(external.status, 502);
     assert.match((await external.json()).error, /hors du serveur/);
