@@ -5,11 +5,10 @@ const http = require('node:http');
 function listen(server) { return new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve(server.address().port))); }
 function close(server) { return new Promise(resolve => server.close(resolve)); }
 
-test('catalogue, compte 1/1 max_connections, redirection load-balancer HLS sign√©e, flux MPEG-TS et garde-fou SSRF', async () => {
+test('catalogue, compte 1/1, redirection load-balancer HLS sign√©e, flux MPEG-TS, QR pairing chiffr√© et garde-fou SSRF', async () => {
   let edgePort = 0;
   let activeCons = '0';
 
-  // Simulated external Xtream load-balancer / edge streaming node on a separate origin (port)
   const edge = http.createServer((req, res) => {
     if (req.url === '/live/play/tok123/77.m3u8') {
       res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
@@ -82,7 +81,8 @@ test('catalogue, compte 1/1 max_connections, redirection load-balancer HLS sign√
   const handler = require('../api/iptv');
   const gateway = http.createServer(handler);
   const gatewayPort = await listen(gateway);
-  const base = `http://127.0.0.1:${gatewayPort}/api/iptv?username=test&password=secret`;
+  const origin = `http://127.0.0.1:${gatewayPort}`;
+  const base = `${origin}/api/iptv?username=test&password=secret`;
   try {
     // 1. Catalogue + Account info
     const categories = await fetch(base + '&action=categories');
@@ -105,7 +105,7 @@ test('catalogue, compte 1/1 max_connections, redirection load-balancer HLS sign√
     const text = await playlist.text();
     assert.match(text, /#EXT-X-KEY:METHOD=AES-128,URI="\/api\/iptv\?/);
     const segment = text.split('\n').find(line => line.startsWith('/api/iptv?'));
-    const segmentResponse = await fetch(new URL(segment, `http://127.0.0.1:${gatewayPort}`));
+    const segmentResponse = await fetch(new URL(segment, origin));
     assert.equal(await segmentResponse.text(), 'segment');
 
     // 3. Cross-origin load-balancer 302 redirect HLS + HMAC-signed segment
@@ -114,7 +114,7 @@ test('catalogue, compte 1/1 max_connections, redirection load-balancer HLS sign√
     const redirectedText = await redirected.text();
     assert.match(redirectedText, /sig=/);
     const edgeSegLine = redirectedText.split('\n').find(line => line.startsWith('/api/iptv?'));
-    const edgeSegResp = await fetch(new URL(edgeSegLine, `http://127.0.0.1:${gatewayPort}`));
+    const edgeSegResp = await fetch(new URL(edgeSegLine, origin));
     assert.equal(edgeSegResp.status, 200);
     assert.equal(await edgeSegResp.text(), 'edge-segment-data');
 
@@ -139,7 +139,32 @@ test('catalogue, compte 1/1 max_connections, redirection load-balancer HLS sign√
     assert.equal(busyJson.activeConnections, 1);
     assert.equal(busyJson.maxConnections, 1);
 
-    // 6. SSRF / unsigned external host rejection
+    // 6. Real-time E2EE TV <-> Phone QR Pairing (long-poll wakeup + burn-after-reading)
+    const pairCreated = await fetch(`${origin}/api/iptv?action=pair_create`, { method: 'POST' });
+    assert.equal(pairCreated.status, 200);
+    const { code, readToken } = await pairCreated.json();
+    assert.equal(code.length, 6);
+
+    const waitPromise = fetch(`${origin}/api/iptv?action=pair_wait&code=${code}&token=${encodeURIComponent(readToken)}`);
+    await new Promise(r => setTimeout(r, 80));
+    const sendResp = await fetch(`${origin}/api/iptv?action=pair_send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, iv: 'AAAAAAAAAAAAAAAA', ciphertext: 'BBBBBBBBBBBBBBBBBBBBBBBB', mode: 'qr' })
+    });
+    assert.equal(sendResp.status, 200);
+
+    const waited = await waitPromise;
+    assert.equal(waited.status, 200);
+    const waitedJson = await waited.json();
+    assert.equal(waitedJson.status, 'paired');
+    assert.equal(waitedJson.envelope.ciphertext, 'BBBBBBBBBBBBBBBBBBBBBBBB');
+
+    // Burn-after-reading: second poll must return 404
+    const secondRead = await fetch(`${origin}/api/iptv?action=pair_wait&code=${code}&token=${encodeURIComponent(readToken)}&nowait=1`);
+    assert.equal(secondRead.status, 404);
+
+    // 7. SSRF / unsigned external host rejection + Multi-provider loopback SSRF block
     const external = await fetch(base + '&action=resource&id=' + encodeURIComponent('http://example.com/anything'));
     assert.equal(external.status, 502);
     assert.match((await external.json()).error, /hors du serveur/);
@@ -148,7 +173,12 @@ test('catalogue, compte 1/1 max_connections, redirection load-balancer HLS sign√
     assert.equal(forgedEdge.status, 502);
     assert.match((await forgedEdge.json()).error, /hors du serveur/);
 
-    const invalid = await fetch(base + '&action=play&id=../../etc');
+    delete process.env.XTREAM_SERVER;
+    const ssrfAttempt = await fetch(`${origin}/api/iptv?action=categories&server=${encodeURIComponent(`http://127.0.0.1:${upstreamPort}`)}&username=test&password=secret`);
+    assert.equal(ssrfAttempt.status, 502);
+    assert.match((await ssrfAttempt.json()).error, /priv√©e interdite|interdit/);
+
+    const invalid = await fetch(`${origin}/api/iptv?action=play&server=${encodeURIComponent('http://93.184.216.34')}&username=test&password=secret&id=../../etc`);
     assert.equal(invalid.status, 400);
   } finally {
     await close(gateway);

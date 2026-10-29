@@ -1,21 +1,37 @@
-# ONDA — IPTV en direct
+# ONDA — Lecteur IPTV Web & Smart TV (by PremiumZone)
 
-Application IPTV en HTML/CSS/JavaScript vanilla, avec HLS.js local et une fonction Node Vercel servant de passerelle HTTPS vers un fournisseur Xtream Codes HTTP. Aucune base de données n'est nécessaire.
+**ONDA** est un lecteur média IPTV Web & Smart TV rapide, fluide et sans publicité, développé en HTML/CSS/JavaScript vanilla avec une passerelle serverless Node.js prête pour Vercel.
 
-## Tester localement
+> **Important :** ONDA est un lecteur média neutre. Aucun flux TV, liste de chaînes ni identifiant n'est inclus dans ce dépôt. Chaque utilisateur connecte uniquement ses propres accès légaux Xtream Codes / M3U.
+
+## Fonctionnalités clés
+
+- **Association Smart TV par QR Code chiffrée de bout en bout (AES-256-GCM)** : scannez le QR Code affiché sur la TV avec votre téléphone, collez votre lien M3U ou vos accès Xtream, et vos chaînes s'ouvrent instantanément sur le téléviseur sans taper à la télécommande.
+- **Double moteur vidéo (`HLS.js` + `mpegts.js`)** : lecture fluide des playlists `.m3u8` (avec suivi sécurisé HMAC des load-balancers externes) et bascule automatique vers le flux direct `.ts` (`MPEG-TS`).
+- **Diagnostic temps réel des connexions (`max_connections`)** : détecte si votre abonnement est déjà utilisé sur un autre appareil (`1/1 active`) et optimise le zapping.
+- **Navigation télécommande Smart TV** : navigation spatiale complète aux flèches directionnelles (`↑ ↓ ← →`, `Entrée`, `Retour`).
+- **Protection SSRF intégrée** : filtrage strict des hôtes internes/privés sur la passerelle.
+
+## Démarrage local
 
 ```bash
 npm run dev
 ```
 
-Ouvrir `http://localhost:8080`. Les identifiants de **test** sont préremplis dans `app.js`, modifiables via Paramètres et enregistrés dans le `localStorage` du navigateur. La passerelle utilise le serveur défini par `XTREAM_SERVER` (par défaut, le serveur de test). Seuls les flux auxquels vous avez le droit d'accéder doivent être utilisés.
+Puis ouvrez `http://localhost:8080`.
 
-## Déployer sur Vercel
+## Tests automatisés
 
-Importer ce dépôt sur Vercel avec **Root Directory = racine du dépôt**, framework **Other** (pas le sous-dossier `frontend` historique), sans commande de build et sans Output Directory personnalisé. Le fichier `vercel.json` et la fonction `api/iptv.js` sont à la racine. Si le serveur change, définir `XTREAM_SERVER` sur Vercel (ex. `https://votre-serveur.example`), redéployer, puis changer l'adresse dans Paramètres. Il n'y a rien à créer dans Supabase ou une autre base de données.
+```bash
+npm test
+```
 
-**Attention :** les identifiants de test inscrits dans `app.js` sont publics pour toute personne qui visite le site ou lit le dépôt. Ce prototype ne doit pas être publié ouvertement avec des accès réels. Pour un usage privé, retirez ces valeurs du code et protégez le déploiement (authentification / contrôle d'accès) avant de mettre de vrais identifiants. `localStorage` n'est pas un coffre-fort. Les URL de lecture contenant les identifiants peuvent apparaître dans les journaux du proxy. Ne mettez pas ce site en production publique tel quel.
+## Déploiement sur Vercel
 
-Le navigateur ne peut pas appeler directement un serveur HTTP depuis Vercel HTTPS (contenu mixte et souvent CORS). Le proxy fournit l'API Xtream et transforme les playlists HLS `.m3u8` et leurs segments vers le même domaine. Le serveur Xtream **doit fournir de vrais flux HLS** : HLS.js ne décode pas un flux `.ts` brut et continu sans playlist. Certains flux peuvent échouer selon le codec/DRM/serveur, et le proxy Vercel (durée d'exécution, bande passante, quotas gratuits) n'est **pas adapté à un usage IPTV intensif ou garanti 100 % gratuit**. Les images de logos en HTTP ne sont pas affichées sur HTTPS. Si le fournisseur ne propose que `.ts`, il faut un transcodeur/serveur vidéo approprié, pas uniquement HLS.js.
+Déployez directement la racine du dépôt sur Vercel (aucune base de données requise) :
+- Par défaut, chaque utilisateur peut connecter son propre serveur Xtream Codes.
+- *(Optionnel)* Définissez la variable d'environnement `XTREAM_SERVER` si vous souhaitez verrouiller une instance privée sur un seul fournisseur.
 
-Structure : `index.html` (interface), `style.css` (style), `app.js` (catalogue/lecteur), `assets/hls.min.js` (HLS.js 1.5.20), `api/iptv.js` (passerelle Vercel), `dev-server.js` (test local), `vercel.json` (déploiement).
+---
+
+Conçu par **PremiumZone**. Pour toute demande de licence marque blanche, intégration sur mesure ou partenariat, ouvrez une issue sur ce dépôt.

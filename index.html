@@ -5,10 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#080d17">
   <meta name="referrer" content="no-referrer">
-  <title>ONDA — La télé, sans détour</title>
+  <title>ONDA — Lecteur Web &amp; Smart TV par PremiumZone</title>
   <link rel="stylesheet" href="/style.css">
   <script src="/assets/hls.min.js" defer></script>
   <script src="/assets/mpegts.min.js" defer></script>
+  <script src="/assets/qrcode.min.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
 <body>
@@ -17,11 +18,12 @@
       <a class="brand" href="/" aria-label="ONDA, accueil"><span class="brand-mark"><svg viewBox="0 0 40 40" fill="none" aria-hidden="true"><path d="M5 25c6-17 12 17 19 0S34 8 36 17" stroke="currentColor" stroke-width="4" stroke-linecap="round"/></svg></span><span>onda<span class="brand-dot">.</span></span></a>
       <div class="sidebar-section-label">ESPACE</div>
       <button class="nav-item active" id="nav-live" type="button"><span class="nav-icon">◉</span> Télévision en direct <span class="nav-indicator"></span></button>
+      <button class="nav-item nav-qr" id="open-tv-pair" type="button"><span class="nav-icon">⊞</span> Connecter par QR Code</button>
       <div class="sidebar-section-label categories-heading">DÉCOUVRIR <span id="category-count"></span></div>
       <nav id="categories" class="categories" aria-label="Catégories de chaînes"></nav>
       <div class="sidebar-bottom">
-        <div class="sidebar-note"><span class="note-orbit">✦</span><span>Votre télé.<br><strong>À votre rythme.</strong></span></div>
-        <button class="settings-link" id="open-settings" type="button"><span>⚙</span> Paramètres <span class="settings-arrow">↗</span></button>
+        <button class="sidebar-note sidebar-pro-btn" id="open-about" type="button"><span class="note-orbit">✦</span><span>Propulsé par <strong>PremiumZone</strong><br><small>Infos, contact &amp; licences ↗</small></span></button>
+        <button class="settings-link" id="open-settings" type="button"><span>⚙</span> Ma playlist Xtream <span class="settings-arrow">↗</span></button>
       </div>
     </aside>
 
@@ -29,13 +31,18 @@
       <header class="topbar">
         <div class="mobile-brand">onda<span>.</span></div>
         <div class="breadcrumb">Explorer <span>/</span> <strong>Direct</strong></div>
-        <div class="top-actions"><span class="live-pill"><span class="pulse-dot"></span> EN DIRECT</span><button id="refresh" class="icon-button" type="button" title="Actualiser les chaînes" aria-label="Actualiser les chaînes">↻</button><button id="mobile-settings" class="icon-button mobile-settings" type="button" aria-label="Paramètres">⚙</button></div>
+        <div class="top-actions">
+          <button id="top-qr-btn" class="qr-pill-btn" type="button" title="Associer une TV par QR Code">⊞ <span>QR TV</span></button>
+          <span class="live-pill"><span class="pulse-dot"></span> EN DIRECT</span>
+          <button id="refresh" class="icon-button" type="button" title="Actualiser les chaînes" aria-label="Actualiser les chaînes">↻</button>
+          <button id="mobile-settings" class="icon-button mobile-settings" type="button" aria-label="Paramètres">⚙</button>
+        </div>
       </header>
 
       <div class="content">
         <section class="hero" aria-labelledby="hero-title">
           <div class="hero-glow"></div>
-          <div class="hero-inner"><div class="eyebrow"><span class="eyebrow-line"></span> BIENVENUE SUR ONDA</div><h1 id="hero-title">La télé, <em>autrement.</em></h1><p>Vos chaînes préférées, réunies au même endroit.<br>Choisissez, installez-vous et profitez du direct.</p><a href="#channel-section" class="hero-button">Explorer les chaînes <span>↗</span></a></div>
+          <div class="hero-inner"><div class="eyebrow"><span class="eyebrow-line"></span> ONDA PLAYER · BY PREMIUMZONE</div><h1 id="hero-title">La télé, <em>autrement.</em></h1><p>Votre lecteur IPTV Web &amp; Smart TV, fluide et privé.<br>Scannez depuis votre téléphone ou saisissez votre propre playlist.</p><div class="hero-cta-row"><a href="#channel-section" class="hero-button">Explorer les chaînes <span>↗</span></a><button id="hero-qr-btn" class="hero-secondary-btn" type="button">⊞ Associer ma TV via QR</button></div></div>
           <div class="hero-art" aria-hidden="true"><div class="art-ring art-ring-1"></div><div class="art-ring art-ring-2"></div><div class="art-ring art-ring-3"></div><div class="art-play">▶</div><div class="art-spark art-spark-a">✦</div><div class="art-spark art-spark-b">✳</div></div>
           <div class="hero-index">01 <span>/</span> LIVE TV</div>
         </section>
@@ -43,22 +50,145 @@
         <section class="channel-section" id="channel-section" aria-labelledby="section-title">
           <div class="section-top"><div><div class="section-kicker">VOTRE SÉLECTION</div><h2 id="section-title">Toutes les chaînes <span class="title-count" id="result-count">0</span></h2></div><div class="section-actions"><label class="search-box"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.7"/><path d="m16 16 5 5"/></svg><input id="search" type="search" placeholder="Rechercher une chaîne..." autocomplete="off" aria-label="Rechercher une chaîne"><kbd>/</kbd></label></div></div>
           <div class="mobile-categories" id="mobile-categories" aria-label="Filtrer par catégorie"></div>
-          <div class="list-heading"><span>CHAÎNES DISPONIBLES</span><span id="list-subtitle">Chargement du catalogue...</span></div>
-          <div id="status" class="status" role="status" aria-live="polite"><span class="loading-spinner"></span><span>Connexion au catalogue en cours...</span></div>
+          <div class="list-heading"><span>CHAÎNES DISPONIBLES</span><span id="list-subtitle">Aucune playlist connectée</span></div>
+          <div id="status" class="status" role="status" aria-live="polite"></div>
           <div id="channel-grid" class="channel-grid" hidden></div>
           <div id="pagination" class="pagination" hidden><button id="show-more" type="button">Afficher plus de chaînes <span>↓</span></button></div>
         </section>
-        <footer>ONDA <span>·</span> Votre espace TV personnel <span>·</span> Les flux restent la propriété de leur fournisseur.</footer>
+        <footer>ONDA <span>·</span> Conçu par <strong>PremiumZone</strong> <span>·</span> Lecteur média neutre (aucun flux inclus — vos accès restent sur votre appareil) <span>·</span> <button id="footer-contact" class="footer-link-btn" type="button">Contact &amp; Collaboration</button></footer>
       </div>
     </main>
   </div>
 
+  <!-- Lecteur vidéo plein écran -->
   <div id="player-overlay" class="player-overlay" hidden role="dialog" aria-modal="true" aria-label="Lecteur vidéo">
     <div class="player-header"><div><span class="player-live"><i></i> DIRECT</span><span id="player-title">Chaîne</span></div><button id="close-player" class="close-button" type="button" aria-label="Fermer le lecteur">✕ <span>Fermer</span></button></div>
     <div class="video-wrap"><video id="video" controls autoplay playsinline preload="none"></video><div id="player-message" class="player-message" role="status" aria-live="polite"></div></div>
     <div class="player-footer"><span id="player-subtitle">Lecture en direct</span><div class="player-controls-right"><div class="mode-group" role="group" aria-label="Format du flux"><button id="mode-auto" class="mode-btn active" type="button" data-mode="auto">Auto</button><button id="mode-hls" class="mode-btn" type="button" data-mode="hls">HLS</button><button id="mode-ts" class="mode-btn" type="button" data-mode="ts">MPEG-TS</button></div><button id="fullscreen" type="button">⛶ Plein écran</button></div></div>
   </div>
 
-  <div id="settings-overlay" class="modal-backdrop" hidden role="presentation"><div class="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title"><div class="dialog-top"><div><div class="section-kicker">CONFIGURATION</div><h2 id="settings-title">Paramètres de connexion</h2></div><button id="close-settings" class="dialog-close" type="button" aria-label="Fermer">✕</button></div><p>Utilisez vos accès Xtream Codes pour charger vos chaînes. Ils sont enregistrés uniquement sur cet appareil.</p><form id="settings-form"><label>URL du serveur<input id="server-input" type="url" required placeholder="http://exemple.com" spellcheck="false"></label><label>Nom d’utilisateur<input id="username-input" type="text" required autocomplete="username" spellcheck="false"></label><label>Mot de passe<input id="password-input" type="password" required autocomplete="current-password"></label><p class="form-hint">Le proxy n’accepte que le serveur configuré sur l’hébergement. Pour changer de fournisseur, modifiez aussi <code>XTREAM_SERVER</code> sur Vercel.</p><div id="settings-error" class="settings-error" role="alert" hidden></div><button class="save-button" type="submit">Enregistrer et reconnecter <span>↗</span></button></form></div></div>
+  <!-- Modal 1 : Configuration manuelle sur cet appareil -->
+  <div id="settings-overlay" class="modal-backdrop" hidden role="presentation">
+    <div class="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <div class="dialog-top"><div><div class="section-kicker">PLAYLIST PERSONNELLE</div><h2 id="settings-title">Connecter vos accès Xtream</h2></div><button id="close-settings" class="dialog-close" type="button" aria-label="Fermer">✕</button></div>
+      <p>Vos identifiants restent enregistrés <strong>uniquement sur cet appareil</strong> (aucune base de données externe).</p>
+      <div class="quick-pair-bar">
+        <button id="settings-to-tv-qr" class="secondary-action-btn" type="button">⊞ Afficher un QR Code (je suis sur TV)</button>
+        <button id="settings-to-phone-send" class="secondary-action-btn" type="button">📱 Envoyer vers une TV (code)</button>
+      </div>
+      <form id="settings-form">
+        <label class="m3u-paste-label">Coller un lien M3U / Xtream complet <small>(remplissage auto)</small>
+          <input id="m3u-input" type="text" placeholder="Ex: http://serveur:8080/get.php?username=...&amp;password=..." spellcheck="false" autocomplete="off">
+        </label>
+        <label>URL du serveur Xtream
+          <input id="server-input" type="url" required placeholder="http://votre-fournisseur.com:8080" spellcheck="false">
+        </label>
+        <div class="form-row-2">
+          <label>Nom d’utilisateur
+            <input id="username-input" type="text" required autocomplete="username" placeholder="Votre identifiant" spellcheck="false">
+          </label>
+          <label>Mot de passe
+            <input id="password-input" type="password" required autocomplete="current-password" placeholder="Votre mot de passe">
+          </label>
+        </div>
+        <div id="settings-error" class="settings-error" role="alert" hidden></div>
+        <button class="save-button" type="submit">Enregistrer et charger mes chaînes <span>↗</span></button>
+        <button id="logout-device" class="danger-link-btn" type="button" hidden>Effacer mes identifiants de cet appareil</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal 2 : Écran Smart TV — QR Code à scanner depuis le téléphone -->
+  <div id="tv-pair-overlay" class="modal-backdrop" hidden role="presentation">
+    <div class="settings-dialog tv-pair-dialog" role="dialog" aria-modal="true" aria-labelledby="tv-pair-title">
+      <div class="dialog-top">
+        <div><div class="section-kicker">ASSOCIATION RAPIDE SMART TV</div><h2 id="tv-pair-title">Scannez avec votre téléphone</h2></div>
+        <button id="close-tv-pair" class="dialog-close" type="button" aria-label="Fermer">✕</button>
+      </div>
+      <div class="tv-pair-grid">
+        <div class="qr-card">
+          <div id="qr-box" class="qr-box" aria-label="QR Code d'association TV"><span class="loading-spinner"></span></div>
+          <div class="pair-code-badge">Code TV : <strong id="pair-code-display">--- · ---</strong></div>
+        </div>
+        <div class="tv-pair-steps">
+          <ol>
+            <li><strong>Scannez le QR Code</strong> avec l’appareil photo de votre téléphone.</li>
+            <li><strong>Copiez-collez</strong> votre lien M3U ou vos accès Xtream sur le téléphone.</li>
+            <li>Vos chaînes <strong>s’ouvrent instantanément</strong> sur ce téléviseur !</li>
+          </ol>
+          <div class="pair-security-note">🔒 <strong>Chiffrement de bout en bout (AES-256)</strong> : la clé reste dans le QR Code et le message est détruit dès réception par votre TV.</div>
+          <div id="pair-status-box" class="pair-status-box"><span class="pulse-dot"></span><span id="pair-status-text">Préparation du code sécurisé...</span></div>
+          <div class="tv-pair-actions">
+            <button id="refresh-tv-qr" class="secondary-action-btn" type="button">↻ Nouveau QR Code</button>
+            <button id="tv-to-manual" class="secondary-action-btn" type="button">⌨ Saisir à la télécommande</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal 3 : Écran Téléphone — Envoyer mes identifiants vers la TV -->
+  <div id="phone-pair-overlay" class="modal-backdrop" hidden role="presentation">
+    <div class="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="phone-pair-title">
+      <div class="dialog-top">
+        <div><div class="section-kicker">TÉLÉCOMMANDE MOBILE · CHIFFRÉ 🔒</div><h2 id="phone-pair-title">Envoyer ma playlist vers la TV</h2></div>
+        <button id="close-phone-pair" class="dialog-close" type="button" aria-label="Fermer">✕</button>
+      </div>
+      <p id="phone-pair-desc">Collez vos identifiants sur votre téléphone : ils seront chiffrés et envoyés directement à votre téléviseur.</p>
+      <form id="phone-pair-form">
+        <label>Code affiché sur la TV (6 caractères)
+          <input id="phone-code-input" class="code-input-upper" type="text" maxlength="7" required placeholder="Ex: K7M4P9" autocomplete="off" spellcheck="false">
+        </label>
+        <label class="m3u-paste-label">Lien M3U / Xtream complet <small>(copier-coller rapide)</small>
+          <div class="input-with-btn">
+            <input id="phone-m3u-input" type="text" placeholder="http://serveur:8080/get.php?username=...&amp;password=..." spellcheck="false" autocomplete="off">
+            <button id="paste-clipboard-btn" type="button">Coller</button>
+          </div>
+        </label>
+        <label>URL du serveur Xtream
+          <input id="phone-server-input" type="url" required placeholder="http://votre-fournisseur.com:8080" spellcheck="false">
+        </label>
+        <div class="form-row-2">
+          <label>Nom d’utilisateur
+            <input id="phone-username-input" type="text" required placeholder="Identifiant" spellcheck="false">
+          </label>
+          <label>Mot de passe
+            <input id="phone-password-input" type="password" required placeholder="Mot de passe">
+          </label>
+        </div>
+        <label class="checkbox-row">
+          <input id="phone-save-local" type="checkbox">
+          <span>Enregistrer aussi cette playlist sur ce téléphone</span>
+        </label>
+        <div id="phone-pair-error" class="settings-error" role="alert" hidden></div>
+        <div id="phone-pair-success" class="pair-success" role="status" hidden></div>
+        <button id="phone-send-btn" class="save-button" type="submit">Envoyer directement sur ma TV <span>↗</span></button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal 4 : À propos / Contact PremiumZone -->
+  <div id="about-overlay" class="modal-backdrop" hidden role="presentation">
+    <div class="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="about-title">
+      <div class="dialog-top">
+        <div><div class="section-kicker">PREMIUMZONE · SOLUTIONS DIGITALES</div><h2 id="about-title">À propos d’ONDA &amp; Contact</h2></div>
+        <button id="close-about" class="dialog-close" type="button" aria-label="Fermer">✕</button>
+      </div>
+      <p><strong>ONDA</strong> est un lecteur IPTV Web &amp; Smart TV nouvelle génération conçu par <strong>PremiumZone</strong> : fluide, sans publicité, avec association instantanée par QR Code chiffré de bout en bout.</p>
+      <div class="about-cards">
+        <div class="about-card">
+          <strong>🔒 100 % Privé &amp; Neutre</strong>
+          <span>ONDA ne fournit aucun flux TV ni liste de chaînes. Chaque utilisateur connecte son propre abonnement légal.</span>
+        </div>
+        <div class="about-card">
+          <strong>💼 Projets, Licences Marque Blanche &amp; Partenariats</strong>
+          <span>Vous souhaitez déployer une version personnalisée (votre marque, gestion d’abonnés, Mobile Money, VOD) ou collaborer avec PremiumZone ?</span>
+        </div>
+      </div>
+      <div class="contact-actions">
+        <a class="save-button contact-cta" href="https://github.com/Masley11/IPTV-SMARTERS-LECTURES/issues" target="_blank" rel="noopener noreferrer">Contacter l’équipe / Ouvrir une demande sur GitHub <span>↗</span></a>
+      </div>
+    </div>
+  </div>
 </body>
 </html>

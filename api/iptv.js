@@ -1,24 +1,51 @@
-// Same-origin gateway for HTTP Xtream servers with load-balancer redirect & live MPEG-TS support.
+// Same-origin multi-provider Xtream gateway with SSRF protection, E2EE TV QR pairing,
+// load-balancer redirect signing & live MPEG-TS support. Zero hardcoded credentials.
 const crypto = require('node:crypto');
 const dns = require('node:dns').promises;
 const net = require('node:net');
 
-const DEFAULT_SERVER = 'http://erdaenbv.dupefik.com';
 const MAX_JSON_BYTES = 15 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 2 * 1024 * 1024;
 const MAX_SEGMENT_SLURP_BYTES = 24 * 1024 * 1024;
+const MAX_PAIR_BODY_BYTES = 8 * 1024;
+const MAX_PAIR_SESSIONS = 500;
+const PAIR_TTL_MS = 5 * 60 * 1000;
+const PAIR_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const USER_AGENT = 'IPTVSmartersPro/4.0 (Linux; Android 13) VLC/3.0.20';
 
-function configuredOrigin() {
-  return (process.env.XTREAM_SERVER || DEFAULT_SERVER).trim().replace(/\/+$/, '');
+const pairSessions = globalThis.__ondaPairSessions || (globalThis.__ondaPairSessions = new Map());
+
+function lockedOrigin() {
+  return (process.env.XTREAM_SERVER || '').trim().replace(/\/+$/, '');
 }
 
-function getBaseURL() {
-  const base = new URL(configuredOrigin());
+function parseServerOrigin(raw) {
+  const cleaned = String(raw || '').trim().replace(/\/+$/, '');
+  if (!cleaned) throw new Error('URL du serveur Xtream manquante');
+  let base;
+  try {
+    base = new URL(cleaned);
+  } catch {
+    throw new Error('URL du serveur Xtream invalide');
+  }
   if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password || base.search || base.hash || base.pathname !== '/') {
-    throw new Error('Configuration XTREAM_SERVER invalide');
+    throw new Error('URL du serveur Xtream invalide (utilisez ex. http://exemple.com:8080)');
   }
   return base;
+}
+
+function resolveBase(query) {
+  const locked = lockedOrigin();
+  if (locked) {
+    const base = parseServerOrigin(locked);
+    const requested = String(query?.get?.('server') ?? query?.server ?? '').trim().replace(/\/+$/, '');
+    if (requested && requested !== base.origin) {
+      throw new Error(`Ce déploiement est verrouillé sur ${base.origin}`);
+    }
+    return { base, isLocked: true };
+  }
+  const provided = query?.get ? query.get('server') : query?.server;
+  return { base: parseServerOrigin(provided), isLocked: false };
 }
 
 function isLoopbackHost(hostname) {
@@ -51,12 +78,14 @@ function isPrivateOrReservedIP(ip) {
   return true;
 }
 
-async function assertSafeExternalURL(url, base) {
+async function assertSafeExternalURL(url, trustedLockedBase) {
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
     throw new Error('Ressource externe invalide');
   }
-  if (url.origin === base.origin) return;
-  if (isLoopbackHost(base.hostname) && isLoopbackHost(url.hostname)) return;
+  if (trustedLockedBase) {
+    if (url.origin === trustedLockedBase.origin) return;
+    if (isLoopbackHost(trustedLockedBase.hostname) && isLoopbackHost(url.hostname)) return;
+  }
 
   const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
   if (host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal')) {
@@ -74,7 +103,7 @@ async function assertSafeExternalURL(url, base) {
 }
 
 function upstreamURL(path, options = {}) {
-  const base = getBaseURL();
+  const base = options.base || resolveBase(options.query).base;
   const url = new URL(path, base);
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
     throw new Error('Ressource hors du serveur configuré');
@@ -88,21 +117,21 @@ function upstreamURL(path, options = {}) {
 function hmacSecret() {
   return crypto
     .createHash('sha256')
-    .update(`${process.env.XTREAM_PROXY_SECRET || process.env.VERCEL_PROJECT_ID || 'onda-iptv-hmac-v1'}|${configuredOrigin()}`)
+    .update(`${process.env.XTREAM_PROXY_SECRET || process.env.VERCEL_PROJECT_ID || 'onda-iptv-hmac-v2'}|${lockedOrigin()}`)
     .digest();
 }
 
-function signResource(targetHref, username, exp) {
+function signResource(targetHref, username, exp, serverOrigin = '') {
   return crypto
     .createHmac('sha256', hmacSecret())
-    .update(`${username}\n${exp}\n${targetHref}`)
+    .update(`${username}\n${serverOrigin}\n${exp}\n${targetHref}`)
     .digest('base64url');
 }
 
-function verifyResource(targetHref, username, exp, sig) {
+function verifyResource(targetHref, username, exp, sig, serverOrigin = '') {
   if (!sig || !/^\d{10,15}$/.test(String(exp || ''))) return false;
   if (Number(exp) < Date.now()) return false;
-  const expected = Buffer.from(signResource(targetHref, username, String(exp)));
+  const expected = Buffer.from(signResource(targetHref, username, String(exp), serverOrigin));
   const provided = Buffer.from(String(sig));
   if (expected.length !== provided.length) return false;
   return crypto.timingSafeEqual(expected, provided);
@@ -155,9 +184,10 @@ async function singleFetch(url, timeoutMs, externalSignal, headers) {
 }
 
 async function upstreamFetch(initialPath, options = {}) {
-  const base = getBaseURL();
-  let url = upstreamURL(initialPath, { allowExternal: Boolean(options.allowExternal) });
-  await assertSafeExternalURL(url, base);
+  const base = options.base;
+  const trustedBase = options.isLocked ? base : null;
+  let url = upstreamURL(initialPath, { base, allowExternal: Boolean(options.allowExternal) });
+  await assertSafeExternalURL(url, trustedBase);
 
   const timeoutMs = options.connectTimeoutMs || 20000;
   const externalSignal = options.signal;
@@ -189,7 +219,7 @@ async function upstreamFetch(initialPath, options = {}) {
     const next = response.headers.get('location');
     if (!next) throw new Error('Redirection sans destination');
     const nextURL = new URL(next, url);
-    await assertSafeExternalURL(nextURL, base);
+    await assertSafeExternalURL(nextURL, trustedBase);
     if (options.returnRedirectTarget && nextURL.href !== url.href) {
       return { response: null, redirectURL: nextURL.href, finalURL: nextURL.href };
     }
@@ -207,16 +237,19 @@ function credentials(query) {
   return { username, password };
 }
 
-async function fetchAccountInfo(base, auth, signal) {
+async function fetchAccountInfo(base, isLocked, auth, signal) {
   try {
     const api = new URL('/player_api.php', base);
     api.searchParams.set('username', auth.username);
     api.searchParams.set('password', auth.password);
-    const { response } = await upstreamFetch(api.href, { signal, connectTimeoutMs: 6000 });
+    const { response } = await upstreamFetch(api.href, { base, isLocked, signal, connectTimeoutMs: 6000 });
     if (!response.ok) return null;
     const data = await response.json();
     const info = data && data.user_info;
     if (!info || typeof info !== 'object') return null;
+    if (Number(info.auth) === 0) {
+      return { status: 'Invalid', activeConnections: 0, maxConnections: 0, expDate: null };
+    }
     const active = Number(info.active_cons ?? 0);
     const max = Number(info.max_connections ?? 0);
     return {
@@ -230,10 +263,17 @@ async function fetchAccountInfo(base, auth, signal) {
   }
 }
 
-async function diagnoseAuthRejection(base, auth, upstreamStatus, signal) {
+async function diagnoseAuthRejection(base, isLocked, auth, upstreamStatus, signal) {
   if ([401, 403, 429, 458].includes(upstreamStatus)) {
-    const info = await fetchAccountInfo(base, auth, signal);
+    const info = await fetchAccountInfo(base, isLocked, auth, signal);
     if (info) {
+      if (info.status === 'Invalid') {
+        return {
+          status: 403,
+          message: 'Identifiants Xtream incorrects.',
+          extra: { code: 'INVALID_CREDENTIALS' }
+        };
+      }
       if (info.status && info.status.toLowerCase() !== 'active') {
         return {
           status: 403,
@@ -261,36 +301,40 @@ async function diagnoseAuthRejection(base, auth, upstreamStatus, signal) {
   };
 }
 
-function playbackURL(query, targetHref, extra = {}) {
-  const resolved = String(targetHref);
-  const base = getBaseURL();
-  const parsed = new URL(resolved, base);
+function playbackURL(auth, base, isLocked, targetHref, extra = {}) {
+  const parsed = new URL(String(targetHref), base);
   if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) {
     throw new Error('Ressource hors du serveur configuré');
   }
   const exp = String(Math.floor(Date.now() / 3600000) * 3600000 + 6 * 3600000);
   const params = new URLSearchParams({
     action: 'resource',
-    username: query.username,
-    password: query.password,
+    username: auth.username,
+    password: auth.password,
     id: parsed.href,
     ...extra
   });
+  if (!isLocked) {
+    params.set('server', base.origin);
+  }
   if (parsed.origin !== base.origin) {
     params.set('exp', exp);
-    params.set('sig', signResource(parsed.href, query.username, exp));
+    params.set('sig', signResource(parsed.href, auth.username, exp, base.origin));
   }
   return `/api/iptv?${params}`;
 }
 
-function rewriteManifest(text, manifestURL, query) {
+function rewriteManifest(text, manifestURL, auth, baseOverride, isLockedOverride) {
+  const { base, isLocked } = baseOverride
+    ? { base: baseOverride, isLocked: Boolean(isLockedOverride) }
+    : resolveBase(auth);
   const wrap = (value, isVariant = false) => {
     const absolute = new URL(value.trim(), manifestURL);
     if (!['http:', 'https:'].includes(absolute.protocol)) {
       throw new Error('Protocole de segment invalide');
     }
     const extra = isVariant || /\.m3u8(?:\?|$)/i.test(absolute.pathname + absolute.search) ? { manifest: '1' } : {};
-    return playbackURL(query, absolute.href, extra);
+    return playbackURL(auth, base, isLocked, absolute.href, extra);
   };
   const lines = text.split(/\r?\n/);
   let nextIsVariant = false;
@@ -343,7 +387,7 @@ async function readRemainingBytes(head, reader, done, maxBytes) {
     if (step.value && step.value.byteLength) {
       total += step.value.byteLength;
       if (total > maxBytes) {
-        try { await reader.cancel(); } catch { /* ignore */ }
+        try { await reader?.cancel(); } catch { /* ignore */ }
         throw new Error('Manifeste HLS trop volumineux');
       }
       chunks.push(Buffer.from(step.value.buffer, step.value.byteOffset, step.value.byteLength));
@@ -442,17 +486,66 @@ function looksLikeMpegTS(head, contentType) {
   return /video\/mp2t|video\/mpeg/i.test(contentType || '');
 }
 
-function fail(res, status, message, extra = {}) {
+function prunePairSessions() {
+  const now = Date.now();
+  for (const [code, session] of pairSessions) {
+    if (session.expiresAt <= now) {
+      pairSessions.delete(code);
+    }
+  }
+  while (pairSessions.size >= MAX_PAIR_SESSIONS) {
+    const oldestKey = pairSessions.keys().next().value;
+    if (!oldestKey) break;
+    pairSessions.delete(oldestKey);
+  }
+}
+
+function generatePairCode() {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const bytes = crypto.randomBytes(6);
+    let code = '';
+    for (let i = 0; i < 6; i++) code += PAIR_ALPHABET[bytes[i] % PAIR_ALPHABET.length];
+    if (!pairSessions.has(code)) return code;
+  }
+  throw new Error('Impossible de générer un code TV');
+}
+
+function normalizePairCode(raw) {
+  return String(raw || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+function readRequestBody(req, maxBytes) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let total = 0;
+    req.on('data', (chunk) => {
+      total += chunk.length;
+      if (total > maxBytes) {
+        reject(new Error('Requête trop volumineuse'));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks, total).toString('utf8')));
+    req.on('error', reject);
+  });
+}
+
+function sendJSON(res, status, payload) {
   res.statusCode = status;
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  res.end(JSON.stringify({ error: message, ...extra }));
+  res.end(JSON.stringify(payload));
+}
+
+function fail(res, status, message, extra = {}) {
+  sendJSON(res, status, { error: message, ...extra });
 }
 
 module.exports = async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, no-transform');
   res.setHeader('Referrer-Policy', 'no-referrer');
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  if (req.method !== 'GET') return fail(res, 405, 'Méthode non autorisée');
 
   const requestAbort = new AbortController();
   const abortNow = () => requestAbort.abort();
@@ -462,26 +555,110 @@ module.exports = async function handler(req, res) {
   });
 
   try {
-    const origin = configuredOrigin();
-    const base = getBaseURL();
     const query = new URL(req.url, 'http://localhost').searchParams;
     const action = query.get('action');
 
-    if (action === 'config') {
-      res.setHeader('Content-Type', 'application/json; charset=utf-8');
-      return res.end(JSON.stringify({ server: origin }));
+    // --- E2EE Smart TV <-> Smartphone QR Pairing ---
+    if (action === 'pair_create') {
+      if (req.method !== 'POST') return fail(res, 405, 'Méthode non autorisée');
+      prunePairSessions();
+      const code = generatePairCode();
+      const readToken = crypto.randomBytes(24).toString('base64url');
+      const expiresAt = Date.now() + PAIR_TTL_MS;
+      pairSessions.set(code, {
+        code,
+        readToken,
+        expiresAt,
+        envelope: null,
+        waiters: new Set()
+      });
+      return sendJSON(res, 200, { code, readToken, expiresIn: Math.floor(PAIR_TTL_MS / 1000) });
     }
 
+    if (action === 'pair_send') {
+      if (req.method !== 'POST') return fail(res, 405, 'Méthode non autorisée');
+      prunePairSessions();
+      const rawBody = await readRequestBody(req, MAX_PAIR_BODY_BYTES);
+      let body;
+      try { body = JSON.parse(rawBody); } catch { return fail(res, 400, 'Données d’association invalides'); }
+      const code = normalizePairCode(body?.code);
+      const iv = String(body?.iv || '');
+      const ciphertext = String(body?.ciphertext || '');
+      const mode = body?.mode === 'manual' ? 'manual' : 'qr';
+      if (code.length !== 6 || !/^[A-Za-z0-9_\-+/=]{12,64}$/.test(iv) || !/^[A-Za-z0-9_\-+/=]{16,4096}$/.test(ciphertext)) {
+        return fail(res, 400, 'Format chiffré invalide');
+      }
+      const session = pairSessions.get(code);
+      if (!session || session.expiresAt <= Date.now()) {
+        pairSessions.delete(code);
+        return fail(res, 404, 'Ce code TV a expiré ou est introuvable. Générez un nouveau QR Code sur la TV.');
+      }
+      session.envelope = { iv, ciphertext, mode };
+      for (const wake of session.waiters) wake();
+      session.waiters.clear();
+      return sendJSON(res, 200, { ok: true });
+    }
+
+    if (action === 'pair_wait') {
+      if (req.method !== 'GET') return fail(res, 405, 'Méthode non autorisée');
+      prunePairSessions();
+      const code = normalizePairCode(query.get('code'));
+      const token = String(query.get('token') || '');
+      const session = pairSessions.get(code);
+      if (!session || session.expiresAt <= Date.now()) {
+        pairSessions.delete(code);
+        return fail(res, 404, 'Code TV expiré', { code: 'PAIR_EXPIRED' });
+      }
+      const expectedBuf = Buffer.from(session.readToken);
+      const providedBuf = Buffer.from(token);
+      if (expectedBuf.length !== providedBuf.length || !crypto.timingSafeEqual(expectedBuf, providedBuf)) {
+        return fail(res, 403, 'Jeton TV invalide');
+      }
+      if (!session.envelope && query.get('nowait') !== '1') {
+        await new Promise((resolve) => {
+          const timer = setTimeout(cleanup, 15000);
+          function cleanup() {
+            clearTimeout(timer);
+            session.waiters.delete(cleanup);
+            requestAbort.signal.removeEventListener('abort', cleanup);
+            resolve();
+          }
+          session.waiters.add(cleanup);
+          requestAbort.signal.addEventListener('abort', cleanup, { once: true });
+        });
+      }
+      if (requestAbort.signal.aborted) return;
+      if (session.envelope) {
+        const envelope = session.envelope;
+        pairSessions.delete(code); // Burn-after-reading: immediately erase from server RAM
+        return sendJSON(res, 200, { status: 'paired', envelope });
+      }
+      const remaining = Math.max(0, Math.floor((session.expiresAt - Date.now()) / 1000));
+      if (!remaining) {
+        pairSessions.delete(code);
+        return fail(res, 404, 'Code TV expiré', { code: 'PAIR_EXPIRED' });
+      }
+      return sendJSON(res, 200, { status: 'waiting', expiresIn: remaining });
+    }
+
+    if (req.method !== 'GET') return fail(res, 405, 'Méthode non autorisée');
+
+    if (action === 'config') {
+      const locked = lockedOrigin();
+      return sendJSON(res, 200, { server: locked || null, locked: Boolean(locked) });
+    }
+
+    const { base, isLocked } = resolveBase(query);
     const auth = credentials({ username: query.get('username'), password: query.get('password') });
     const id = query.get('id');
     const isZapping = query.get('zapping') === '1';
     const lockRetries = isZapping ? [1200, 1800, 2200, 2500] : [1100];
 
     if (action === 'account') {
-      const info = await fetchAccountInfo(base, auth, requestAbort.signal);
-      if (!info) return fail(res, 502, 'Impossible de lire l’état du compte IPTV');
-      res.setHeader('Content-Type', 'application/json; charset=utf-8');
-      return res.end(JSON.stringify(info));
+      const info = await fetchAccountInfo(base, isLocked, auth, requestAbort.signal);
+      if (!info) return fail(res, 502, 'Impossible de joindre ce serveur Xtream Codes');
+      if (info.status === 'Invalid') return fail(res, 403, 'Identifiants Xtream incorrects (vérifiez utilisateur / mot de passe)', { code: 'INVALID_CREDENTIALS' });
+      return sendJSON(res, 200, info);
     }
 
     if (action === 'categories' || action === 'streams') {
@@ -489,7 +666,7 @@ module.exports = async function handler(req, res) {
       api.searchParams.set('username', auth.username);
       api.searchParams.set('password', auth.password);
       api.searchParams.set('action', action === 'categories' ? 'get_live_categories' : 'get_live_streams');
-      const { response } = await upstreamFetch(api.href, { signal: requestAbort.signal });
+      const { response } = await upstreamFetch(api.href, { base, isLocked, signal: requestAbort.signal });
       if (!response.ok) return fail(res, 502, `Le serveur IPTV a répondu ${response.status}`);
       const length = Number(response.headers.get('content-length') || 0);
       if (length > MAX_JSON_BYTES) return fail(res, 502, 'Liste trop volumineuse');
@@ -511,6 +688,8 @@ module.exports = async function handler(req, res) {
       let lastStatus = 0;
       for (const candidate of candidates) {
         const result = await upstreamFetch(candidate, {
+          base,
+          isLocked,
           signal: requestAbort.signal,
           connectTimeoutMs: 15000,
           retryDelays: lockRetries
@@ -524,7 +703,7 @@ module.exports = async function handler(req, res) {
         if (![400, 404].includes(lastStatus)) break;
       }
       if (!upstream) {
-        const diag = await diagnoseAuthRejection(base, auth, lastStatus, requestAbort.signal);
+        const diag = await diagnoseAuthRejection(base, isLocked, auth, lastStatus, requestAbort.signal);
         return fail(res, diag.status, diag.message, diag.extra);
       }
 
@@ -560,7 +739,7 @@ module.exports = async function handler(req, res) {
       if (parsed.origin !== base.origin) {
         const exp = query.get('exp');
         const sig = query.get('sig');
-        if (!verifyResource(parsed.href, auth.username, exp, sig)) {
+        if (!verifyResource(parsed.href, auth.username, exp, sig, base.origin)) {
           throw new Error('Ressource hors du serveur configuré');
         }
         allowExternal = true;
@@ -571,6 +750,8 @@ module.exports = async function handler(req, res) {
     }
 
     const fetched = await upstreamFetch(targetPath, {
+      base,
+      isLocked,
       allowExternal,
       signal: requestAbort.signal,
       connectTimeoutMs: 15000,
@@ -580,14 +761,14 @@ module.exports = async function handler(req, res) {
 
     if (fetched.redirectURL) {
       res.statusCode = 302;
-      res.setHeader('Location', playbackURL(auth, fetched.redirectURL, { manifest: '1' }));
+      res.setHeader('Location', playbackURL(auth, base, isLocked, fetched.redirectURL, { manifest: '1' }));
       return res.end();
     }
 
     const { response, finalURL } = fetched;
     if (!response.ok) {
       const diag = action === 'play'
-        ? await diagnoseAuthRejection(base, auth, response.status, requestAbort.signal)
+        ? await diagnoseAuthRejection(base, isLocked, auth, response.status, requestAbort.signal)
         : { status: 502, message: `Le serveur IPTV a répondu ${response.status}`, extra: {} };
       return fail(res, diag.status, diag.message, diag.extra);
     }
@@ -597,7 +778,7 @@ module.exports = async function handler(req, res) {
 
     if (looksLikeHLS(head)) {
       const fullBuf = await readRemainingBytes(head, reader, done, MAX_MANIFEST_BYTES);
-      const rewritten = rewriteManifest(fullBuf.toString('utf8'), finalURL, auth);
+      const rewritten = rewriteManifest(fullBuf.toString('utf8'), finalURL, auth, base, isLocked);
       res.setHeader('Content-Type', 'application/vnd.apple.mpegurl; charset=utf-8');
       return res.end(rewritten);
     }

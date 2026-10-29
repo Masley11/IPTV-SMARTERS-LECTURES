@@ -4,7 +4,7 @@ const path = require('node:path');
 const handler = require('./api/iptv');
 const root = __dirname;
 const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
-const allowedFiles = ['/index.html', '/app.js', '/style.css', '/assets/hls.min.js', '/assets/mpegts.min.js'];
+const allowedFiles = ['/index.html', '/app.js', '/style.css', '/assets/hls.min.js', '/assets/mpegts.min.js', '/assets/qrcode.min.js'];
 http.createServer((req, res) => {
   if (req.url.startsWith('/api/iptv')) return handler(req, res);
   const pathname = new URL(req.url, 'http://localhost').pathname;
