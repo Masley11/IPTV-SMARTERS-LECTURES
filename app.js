@@ -253,16 +253,20 @@ function formatMaxConnMessage(account) {
   return MAX_CONN_MESSAGE;
 }
 
-function startMpegTs(item, token, fromFallback = false) {
+function startMpegTs(item, token, fromFallback = false, allowHlsFallback = false) {
   if (token !== state.playToken) return;
   destroyEngines();
   if (!mpegtsSupported()) {
+    if (allowHlsFallback) {
+      startHls(item, token, false);
+      return;
+    }
     showPlayerMessage('Ce fournisseur diffuse en MPEG-TS (.ts) et ce navigateur ne prend pas en charge MSE. Essayez Chrome, Edge, Firefox ou Android.', true);
     return;
   }
   const label = item.name || 'Chaîne';
   $('player-subtitle').textContent = 'Direct MPEG-TS · ' + label;
-  showPlayerMessage(fromFallback ? 'Passage automatique en flux direct MPEG-TS...' : 'Connexion au flux direct MPEG-TS...');
+  showPlayerMessage(fromFallback ? 'Passage automatique en flux direct MPEG-TS...' : 'Connexion au direct...');
 
   const video = $('video');
   const url = params('ts', { id: item.stream_id, ...zappingParam(), _t: Date.now() });
@@ -295,7 +299,7 @@ function startMpegTs(item, token, fromFallback = false) {
     if (token !== state.playToken) return;
     if (hasPlayed) {
       showPlayerMessage('Reconnexion automatique au direct...');
-      state.reconnectTimer = setTimeout(() => startMpegTs(item, token, false), 900);
+      state.reconnectTimer = setTimeout(() => startMpegTs(item, token, false, false), 900);
       return;
     }
     const statusCode = errorInfo && errorInfo.code;
@@ -310,6 +314,11 @@ function startMpegTs(item, token, fromFallback = false) {
       showPlayerMessage('Ce compte IPTV est inactif ou expiré chez le fournisseur.', true);
       return;
     }
+    if (allowHlsFallback) {
+      destroyEngines();
+      state.reconnectTimer = setTimeout(() => startHls(item, token, false), 150);
+      return;
+    }
     const msg = statusCode === 502
       ? 'Cette chaîne est actuellement hors antenne ou indisponible chez le fournisseur (ex. chaîne événementielle hors match).'
       : 'Lecture impossible sur cette chaîne (' + (errorDetail || errorType || 'flux indisponible') + ').';
@@ -319,8 +328,13 @@ function startMpegTs(item, token, fromFallback = false) {
   player.on(window.mpegts.Events.LOADING_COMPLETE, () => {
     if (token !== state.playToken) return;
     if (hasPlayed && !$('player-overlay').hidden) {
-      state.reconnectTimer = setTimeout(() => startMpegTs(item, token, false), 400);
+      state.reconnectTimer = setTimeout(() => startMpegTs(item, token, false, false), 400);
     } else if (!hasPlayed) {
+      if (allowHlsFallback) {
+        destroyEngines();
+        state.reconnectTimer = setTimeout(() => startHls(item, token, false), 150);
+        return;
+      }
       showPlayerMessage('Cette chaîne est actuellement hors antenne (aucun flux vidéo actif).', true);
     }
   });
@@ -448,9 +462,13 @@ function play(item, keepFullscreen = false) {
   if (!keepFullscreen) $('close-player').focus();
 
   if (state.mode === 'ts') {
-    startMpegTs(item, token, false);
+    startMpegTs(item, token, false, false);
+  } else if (state.mode === 'hls') {
+    startHls(item, token, false);
+  } else if (mpegtsSupported()) {
+    startMpegTs(item, token, false, true);
   } else {
-    startHls(item, token, state.mode === 'auto');
+    startHls(item, token, false);
   }
 }
 
