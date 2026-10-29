@@ -1,5 +1,6 @@
 {
   "version": 2,
+  "regions": ["cdg1"],
   "functions": { "api/iptv.js": { "maxDuration": 300 } },
   "headers": [
     { "source": "/(.*)", "headers": [

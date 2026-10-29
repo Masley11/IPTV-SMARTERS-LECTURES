@@ -6,6 +6,7 @@ const net = require('node:net');
 const DEFAULT_SERVER = 'http://erdaenbv.dupefik.com';
 const MAX_JSON_BYTES = 15 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 2 * 1024 * 1024;
+const MAX_SEGMENT_SLURP_BYTES = 24 * 1024 * 1024;
 const USER_AGENT = 'IPTVSmartersPro/4.0 (Linux; Android 13) VLC/3.0.20';
 
 function configuredOrigin() {
@@ -376,6 +377,60 @@ async function streamReaderToResponse(head, reader, done, res, abortSignal) {
   }
 }
 
+async function deliverSegment(head, reader, done, contentType, contentLengthHeader, res, abortSignal) {
+  res.setHeader('Content-Type', contentType || 'application/octet-stream');
+  const declaredLength = Number(contentLengthHeader || 0);
+  if (done || !reader) {
+    res.setHeader('Content-Length', String(head.length));
+    res.end(head);
+    return;
+  }
+  if (declaredLength > MAX_SEGMENT_SLURP_BYTES) {
+    if (contentLengthHeader) res.setHeader('Content-Length', contentLengthHeader);
+    await streamReaderToResponse(head, reader, done, res, abortSignal);
+    return;
+  }
+
+  // Slurp finite HLS segment at datacenter speed so the upstream 1-connection Xtream slot closes in ~100ms
+  const chunks = head.length ? [head] : [];
+  let total = head.length;
+  let overflowed = false;
+  try {
+    while (!abortSignal?.aborted && !res.destroyed) {
+      const step = await reader.read();
+      if (step.done) break;
+      if (step.value && step.value.byteLength) {
+        const buf = Buffer.from(step.value.buffer, step.value.byteOffset, step.value.byteLength);
+        chunks.push(buf);
+        total += buf.length;
+        if (total > MAX_SEGMENT_SLURP_BYTES) {
+          overflowed = true;
+          break;
+        }
+      }
+    }
+  } catch (err) {
+    try { await reader.cancel(); } catch { /* ignore */ }
+    throw err;
+  }
+
+  if (abortSignal?.aborted || res.destroyed) {
+    try { await reader.cancel(); } catch { /* ignore */ }
+    if (!res.writableEnded) res.end();
+    return;
+  }
+
+  const buffered = Buffer.concat(chunks, total);
+  if (!overflowed) {
+    try { await reader.cancel(); } catch { /* ignore */ }
+    res.setHeader('Content-Length', String(buffered.length));
+    res.end(buffered);
+    return;
+  }
+
+  await streamReaderToResponse(buffered, reader, false, res, abortSignal);
+}
+
 function looksLikeHLS(head) {
   if (!head.length) return false;
   const sample = head.subarray(0, Math.min(head.length, 256)).toString('utf8');
@@ -519,7 +574,7 @@ module.exports = async function handler(req, res) {
       allowExternal,
       signal: requestAbort.signal,
       connectTimeoutMs: 15000,
-      retryDelays: action === 'play' ? lockRetries : [],
+      retryDelays: action === 'play' ? lockRetries : [350, 800, 1400],
       returnRedirectTarget: action === 'play'
     });
 
@@ -558,11 +613,15 @@ module.exports = async function handler(req, res) {
       return fail(res, 502, 'Flux HLS indisponible sur cette chaîne', { code: 'NO_HLS' });
     }
 
-    res.setHeader('Content-Type', contentType || 'application/octet-stream');
-    if (response.headers.get('content-length')) {
-      res.setHeader('Content-Length', response.headers.get('content-length'));
-    }
-    await streamReaderToResponse(head, reader, done, res, requestAbort.signal);
+    await deliverSegment(
+      head,
+      reader,
+      done,
+      contentType,
+      response.headers.get('content-length'),
+      res,
+      requestAbort.signal
+    );
   } catch (error) {
     if (!res.headersSent) fail(res, 502, error.message || 'Serveur IPTV inaccessible');
     else res.destroy(error);

@@ -270,17 +270,21 @@ function startMpegTs(item, token, fromFallback = false, allowHlsFallback = false
 
   const video = $('video');
   const url = params('ts', { id: item.stream_id, ...zappingParam(), _t: Date.now() });
+  const startedAt = Date.now();
   const player = window.mpegts.createPlayer(
     { type: 'mpegts', isLive: true, cors: true, url },
     {
-      enableWorker: false,
-      enableStashBuffer: false,
-      liveBufferLatencyChasing: true,
-      liveBufferLatencyMaxLatency: 5,
-      liveBufferLatencyMinRemain: 1,
+      isLive: true,
+      enableWorker: true,
+      enableStashBuffer: true,
+      stashInitialSize: 512 * 1024,
+      lazyLoad: false,
+      liveBufferLatencyChasing: false,
+      liveSync: false,
+      fixAudioTimestampGap: true,
       autoCleanupSourceBuffer: true,
-      autoCleanupMaxBackwardDuration: 30,
-      autoCleanupMinBackwardDuration: 15
+      autoCleanupMaxBackwardDuration: 60,
+      autoCleanupMinBackwardDuration: 30
     }
   );
   state.mpegts = player;
@@ -328,6 +332,11 @@ function startMpegTs(item, token, fromFallback = false, allowHlsFallback = false
   player.on(window.mpegts.Events.LOADING_COMPLETE, () => {
     if (token !== state.playToken) return;
     if (hasPlayed && !$('player-overlay').hidden) {
+      if (state.mode === 'auto' && Date.now() - startedAt < 25000) {
+        destroyEngines();
+        state.reconnectTimer = setTimeout(() => startHls(item, token, false), 150);
+        return;
+      }
       state.reconnectTimer = setTimeout(() => startMpegTs(item, token, false, false), 400);
     } else if (!hasPlayed) {
       if (allowHlsFallback) {
@@ -364,15 +373,28 @@ function startHls(item, token, allowFallback) {
   if (window.Hls && Hls.isSupported()) {
     const hls = new Hls({
       lowLatencyMode: false,
+      liveSyncDurationCount: 3,
+      liveMaxLatencyDurationCount: 10,
       backBufferLength: 30,
-      maxBufferLength: 20,
+      maxBufferLength: 50,
+      maxMaxBufferLength: 90,
+      maxBufferHole: 0.8,
+      highBufferWatchdogPeriod: 3,
+      nudgeOffset: 0.2,
+      nudgeMaxRetry: 5,
       manifestLoadingTimeOut: 20000,
-      manifestLoadingMaxRetry: allowFallback ? 0 : 1,
-      levelLoadingTimeOut: 15000,
-      fragLoadingTimeOut: 20000
+      manifestLoadingMaxRetry: allowFallback ? 1 : 3,
+      manifestLoadingRetryDelay: 700,
+      levelLoadingTimeOut: 20000,
+      levelLoadingMaxRetry: 4,
+      levelLoadingRetryDelay: 700,
+      fragLoadingTimeOut: 30000,
+      fragLoadingMaxRetry: 5,
+      fragLoadingRetryDelay: 700
     });
     state.hls = hls;
     let manifestReady = false;
+    let networkRecoveries = 0;
 
     hls.loadSource(url);
     hls.attachMedia(video);
@@ -386,11 +408,24 @@ function startHls(item, token, allowFallback) {
       video.play().catch(() => showPlayerMessage('Appuyez sur ▶ pour lancer la lecture.'));
     });
 
+    hls.on(Hls.Events.FRAG_BUFFERED, () => {
+      if (token === state.playToken) networkRecoveries = 0;
+    });
+
     hls.on(Hls.Events.ERROR, (_event, data) => {
       if (token !== state.playToken || !data.fatal) return;
-      if (data.type === Hls.ErrorTypes.MEDIA_ERROR && manifestReady) {
-        hls.recoverMediaError();
-        return;
+      if (manifestReady) {
+        if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+          hls.recoverMediaError();
+          return;
+        }
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR && networkRecoveries < 6) {
+          networkRecoveries++;
+          state.reconnectTimer = setTimeout(() => {
+            if (token === state.playToken && state.hls === hls) hls.startLoad();
+          }, 700);
+          return;
+        }
       }
       const httpCode = data.response && data.response.code;
       if (httpCode === 429) {
@@ -408,7 +443,7 @@ function startHls(item, token, allowFallback) {
       }
       if (allowFallback && mpegtsSupported()) {
         destroyEngines();
-        state.reconnectTimer = setTimeout(() => startMpegTs(item, token, true), 150);
+        state.reconnectTimer = setTimeout(() => startMpegTs(item, token, true, false), 150);
         return;
       }
       showPlayerMessage('Flux HLS indisponible sur cette chaîne. Essayez le mode MPEG-TS ou une autre chaîne.', true);
@@ -463,12 +498,8 @@ function play(item, keepFullscreen = false) {
 
   if (state.mode === 'ts') {
     startMpegTs(item, token, false, false);
-  } else if (state.mode === 'hls') {
-    startHls(item, token, false);
-  } else if (mpegtsSupported()) {
-    startMpegTs(item, token, false, true);
   } else {
-    startHls(item, token, false);
+    startHls(item, token, state.mode === 'auto');
   }
 }
 
