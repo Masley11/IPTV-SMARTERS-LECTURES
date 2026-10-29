@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#080d17">
+  <meta name="referrer" content="no-referrer">
+  <title>ONDA — La télé, sans détour</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/assets/hls.min.js" defer></script>
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Navigation principale">
+      <a class="brand" href="/" aria-label="ONDA, accueil"><span class="brand-mark"><svg viewBox="0 0 40 40" fill="none" aria-hidden="true"><path d="M5 25c6-17 12 17 19 0S34 8 36 17" stroke="currentColor" stroke-width="4" stroke-linecap="round"/></svg></span><span>onda<span class="brand-dot">.</span></span></a>
+      <div class="sidebar-section-label">ESPACE</div>
+      <button class="nav-item active" id="nav-live" type="button"><span class="nav-icon">◉</span> Télévision en direct <span class="nav-indicator"></span></button>
+      <div class="sidebar-section-label categories-heading">DÉCOUVRIR <span id="category-count"></span></div>
+      <nav id="categories" class="categories" aria-label="Catégories de chaînes"></nav>
+      <div class="sidebar-bottom">
+        <div class="sidebar-note"><span class="note-orbit">✦</span><span>Votre télé.<br><strong>À votre rythme.</strong></span></div>
+        <button class="settings-link" id="open-settings" type="button"><span>⚙</span> Paramètres <span class="settings-arrow">↗</span></button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="mobile-brand">onda<span>.</span></div>
+        <div class="breadcrumb">Explorer <span>/</span> <strong>Direct</strong></div>
+        <div class="top-actions"><span class="live-pill"><span class="pulse-dot"></span> EN DIRECT</span><button id="refresh" class="icon-button" type="button" title="Actualiser les chaînes" aria-label="Actualiser les chaînes">↻</button><button id="mobile-settings" class="icon-button mobile-settings" type="button" aria-label="Paramètres">⚙</button></div>
+      </header>
+
+      <div class="content">
+        <section class="hero" aria-labelledby="hero-title">
+          <div class="hero-glow"></div>
+          <div class="hero-inner"><div class="eyebrow"><span class="eyebrow-line"></span> BIENVENUE SUR ONDA</div><h1 id="hero-title">La télé, <em>autrement.</em></h1><p>Vos chaînes préférées, réunies au même endroit.<br>Choisissez, installez-vous et profitez du direct.</p><a href="#channel-section" class="hero-button">Explorer les chaînes <span>↗</span></a></div>
+          <div class="hero-art" aria-hidden="true"><div class="art-ring art-ring-1"></div><div class="art-ring art-ring-2"></div><div class="art-ring art-ring-3"></div><div class="art-play">▶</div><div class="art-spark art-spark-a">✦</div><div class="art-spark art-spark-b">✳</div></div>
+          <div class="hero-index">01 <span>/</span> LIVE TV</div>
+        </section>
+
+        <section class="channel-section" id="channel-section" aria-labelledby="section-title">
+          <div class="section-top"><div><div class="section-kicker">VOTRE SÉLECTION</div><h2 id="section-title">Toutes les chaînes <span class="title-count" id="result-count">0</span></h2></div><div class="section-actions"><label class="search-box"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.7"/><path d="m16 16 5 5"/></svg><input id="search" type="search" placeholder="Rechercher une chaîne..." autocomplete="off" aria-label="Rechercher une chaîne"><kbd>/</kbd></label></div></div>
+          <div class="mobile-categories" id="mobile-categories" aria-label="Filtrer par catégorie"></div>
+          <div class="list-heading"><span>CHAÎNES DISPONIBLES</span><span id="list-subtitle">Chargement du catalogue...</span></div>
+          <div id="status" class="status" role="status" aria-live="polite"><span class="loading-spinner"></span><span>Connexion au catalogue en cours...</span></div>
+          <div id="channel-grid" class="channel-grid" hidden></div>
+          <div id="pagination" class="pagination" hidden><button id="show-more" type="button">Afficher plus de chaînes <span>↓</span></button></div>
+        </section>
+        <footer>ONDA <span>·</span> Votre espace TV personnel <span>·</span> Les flux restent la propriété de leur fournisseur.</footer>
+      </div>
+    </main>
+  </div>
+
+  <div id="player-overlay" class="player-overlay" hidden role="dialog" aria-modal="true" aria-label="Lecteur vidéo">
+    <div class="player-header"><div><span class="player-live"><i></i> DIRECT</span><span id="player-title">Chaîne</span></div><button id="close-player" class="close-button" type="button" aria-label="Fermer le lecteur">✕ <span>Fermer</span></button></div>
+    <div class="video-wrap"><video id="video" controls autoplay playsinline preload="none"></video><div id="player-message" class="player-message" role="status" aria-live="polite"></div></div>
+    <div class="player-footer"><span id="player-subtitle">Lecture en direct</span><button id="fullscreen" type="button">⛶ Plein écran</button></div>
+  </div>
+
+  <div id="settings-overlay" class="modal-backdrop" hidden role="presentation"><div class="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title"><div class="dialog-top"><div><div class="section-kicker">CONFIGURATION</div><h2 id="settings-title">Paramètres de connexion</h2></div><button id="close-settings" class="dialog-close" type="button" aria-label="Fermer">✕</button></div><p>Utilisez vos accès Xtream Codes pour charger vos chaînes. Ils sont enregistrés uniquement sur cet appareil.</p><form id="settings-form"><label>URL du serveur<input id="server-input" type="url" required placeholder="http://exemple.com" spellcheck="false"></label><label>Nom d’utilisateur<input id="username-input" type="text" required autocomplete="username" spellcheck="false"></label><label>Mot de passe<input id="password-input" type="password" required autocomplete="current-password"></label><p class="form-hint">Le proxy n’accepte que le serveur configuré sur l’hébergement. Pour changer de fournisseur, modifiez aussi <code>XTREAM_SERVER</code> sur Vercel.</p><div id="settings-error" class="settings-error" role="alert" hidden></div><button class="save-button" type="submit">Enregistrer et reconnecter <span>↗</span></button></form></div></div>
+</body>
+</html>

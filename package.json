@@ -1,0 +1,11 @@
+{
+  "name": "pulse-iptv",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "node dev-server.js",
+    "start": "node dev-server.js",
+    "test": "node --test tests/iptv.test.js"
+  },
+  "engines": { "node": ">=18" }
+}
