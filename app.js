@@ -5,17 +5,43 @@ const DEFAULTS = {
   password: '7YZTBJVL'
 };
 const STORAGE_KEY = 'onda-xtream-settings';
+const MODE_KEY = 'onda-stream-mode';
 const $ = (id) => document.getElementById(id);
-const state = { categories: [], streams: [], selected: 'all', query: '', visible: 40, credentials: readCredentials(), configuredServer: DEFAULTS.server, hls: null, current: null, loading: false };
+const state = {
+  categories: [],
+  streams: [],
+  selected: 'all',
+  query: '',
+  visible: 40,
+  credentials: readCredentials(),
+  configuredServer: DEFAULTS.server,
+  mode: readMode(),
+  hls: null,
+  mpegts: null,
+  reconnectTimer: null,
+  playToken: 0,
+  current: null,
+  loading: false
+};
 const icons = ['◈', '▣', '◉', '✦', '◇', '▤', '◎'];
 
 function readCredentials() {
   try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}') }; }
   catch { return { ...DEFAULTS }; }
 }
+function readMode() {
+  try {
+    const saved = localStorage.getItem(MODE_KEY);
+    return ['auto', 'hls', 'ts'].includes(saved) ? saved : 'auto';
+  } catch { return 'auto'; }
+}
 function normalizeServer(value) { return value.trim().replace(/\/+$/, ''); }
 function params(action, extra = {}) {
   return '/api/iptv?' + new URLSearchParams({ action, username: state.credentials.username, password: state.credentials.password, ...extra });
+}
+function mpegtsSupported() {
+  try { return Boolean(window.mpegts && window.mpegts.isSupported()); }
+  catch { return false; }
 }
 async function requestJSON(url) {
   const response = await fetch(url, { cache: 'no-store' });
@@ -77,7 +103,7 @@ function renderCategories() {
     button.setAttribute('aria-pressed', String(state.selected === id));
     const icon = document.createElement('span'); icon.className = 'category-icon'; icon.textContent = icons[index % icons.length];
     const name = document.createElement('span'); name.className = 'category-name'; name.textContent = item.category_name || 'Sans nom';
-    const number = document.createElement('span'); number.className = 'category-number'; number.textContent = item.count;
+    const number = document.createElement('span'); name.className = 'category-number'; number.textContent = item.count;
     button.append(icon, name, number); button.addEventListener('click', () => chooseCategory(id)); nav.append(button);
     const chip = document.createElement('button'); chip.type = 'button'; chip.className = state.selected === id ? 'selected' : '';
     chip.setAttribute('aria-pressed', String(state.selected === id)); chip.textContent = item.category_name || 'Sans nom';
@@ -114,33 +140,232 @@ function renderChannels() {
   }
   $('pagination').hidden = items.length <= state.visible;
 }
-function destroyPlayback() {
-  if (state.hls) { state.hls.destroy(); state.hls = null; }
-  const video = $('video'); video.pause(); video.removeAttribute('src'); video.load();
+
+function updateModeButtons() {
+  document.querySelectorAll('.mode-btn').forEach((btn) => {
+    const active = btn.dataset.mode === state.mode;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', String(active));
+  });
 }
-function showPlayerMessage(text) { $('player-message').textContent = text; }
-function play(item) {
-  destroyPlayback(); state.current = item;
-  $('player-title').textContent = item.name || 'Chaîne'; $('player-subtitle').textContent = 'Lecture en direct · ' + (item.name || 'Chaîne');
-  $('player-overlay').hidden = false; document.body.style.overflow = 'hidden'; $('close-player').focus();
+
+function setMode(nextMode) {
+  if (!['auto', 'hls', 'ts'].includes(nextMode)) return;
+  state.mode = nextMode;
+  try { localStorage.setItem(MODE_KEY, nextMode); } catch { /* ignore */ }
+  updateModeButtons();
+  if (state.current && !$('player-overlay').hidden) {
+    play(state.current, true);
+  }
+}
+
+function destroyEngines() {
+  if (state.reconnectTimer) {
+    clearTimeout(state.reconnectTimer);
+    state.reconnectTimer = null;
+  }
+  if (state.hls) {
+    try { state.hls.destroy(); } catch { /* ignore */ }
+    state.hls = null;
+  }
+  if (state.mpegts) {
+    try {
+      state.mpegts.pause();
+      state.mpegts.unload();
+      state.mpegts.detachMediaElement();
+      state.mpegts.destroy();
+    } catch { /* ignore */ }
+    state.mpegts = null;
+  }
+  const video = $('video');
+  video.pause();
+  video.removeAttribute('src');
+  video.load();
+}
+
+function destroyPlayback() {
+  state.playToken++;
+  destroyEngines();
+}
+
+function showPlayerMessage(text, retryable = false) {
+  const box = $('player-message');
+  box.replaceChildren();
+  if (!text) return;
+  const span = document.createElement('span');
+  span.textContent = text;
+  box.append(span);
+  if (retryable && state.current) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = '↻ Réessayer le flux';
+    btn.addEventListener('click', () => {
+      if (state.current) play(state.current, true);
+    });
+    box.append(btn);
+  }
+}
+
+function startMpegTs(item, token, fromFallback = false) {
+  if (token !== state.playToken) return;
+  destroyEngines();
+  if (!mpegtsSupported()) {
+    showPlayerMessage('Ce fournisseur diffuse en MPEG-TS (.ts) et ce navigateur ne prend pas en charge MSE. Essayez Chrome, Edge, Firefox ou Android.', true);
+    return;
+  }
+  const label = item.name || 'Chaîne';
+  $('player-subtitle').textContent = 'Direct MPEG-TS · ' + label;
+  showPlayerMessage(fromFallback ? 'Passage automatique en flux direct MPEG-TS...' : 'Connexion au flux direct MPEG-TS...');
+
+  const video = $('video');
+  const url = params('ts', { id: item.stream_id, _t: Date.now() });
+  const player = window.mpegts.createPlayer(
+    { type: 'mpegts', isLive: true, cors: true, url },
+    {
+      enableWorker: false,
+      enableStashBuffer: false,
+      liveBufferLatencyChasing: true,
+      liveBufferLatencyMaxLatency: 5,
+      liveBufferLatencyMinRemain: 1,
+      autoCleanupSourceBuffer: true,
+      autoCleanupMaxBackwardDuration: 30,
+      autoCleanupMinBackwardDuration: 15
+    }
+  );
+  state.mpegts = player;
+  let hasPlayed = false;
+
+  const markPlaying = () => {
+    if (token !== state.playToken) return;
+    hasPlayed = true;
+    showPlayerMessage('');
+  };
+  video.addEventListener('playing', markPlaying, { once: true });
+
+  player.on(window.mpegts.Events.ERROR, (errorType, errorDetail, errorInfo) => {
+    if (token !== state.playToken) return;
+    if (hasPlayed) {
+      showPlayerMessage('Reconnexion automatique au direct...');
+      state.reconnectTimer = setTimeout(() => startMpegTs(item, token, false), 900);
+      return;
+    }
+    const statusCode = errorInfo && errorInfo.code;
+    const msg = statusCode === 502
+      ? 'Cette chaîne est actuellement hors antenne ou indisponible chez le fournisseur (ex. chaîne événementielle hors match).'
+      : 'Lecture impossible sur cette chaîne (' + (errorDetail || errorType || 'flux indisponible') + ').';
+    showPlayerMessage(msg, true);
+  });
+
+  player.on(window.mpegts.Events.LOADING_COMPLETE, () => {
+    if (token !== state.playToken) return;
+    if (hasPlayed && !$('player-overlay').hidden) {
+      state.reconnectTimer = setTimeout(() => startMpegTs(item, token, false), 400);
+    } else if (!hasPlayed) {
+      showPlayerMessage('Cette chaîne est actuellement hors antenne (aucun flux vidéo actif).', true);
+    }
+  });
+
+  player.attachMediaElement(video);
+  player.load();
+  const playPromise = player.play();
+  if (playPromise && typeof playPromise.catch === 'function') {
+    playPromise.catch(() => {
+      if (token === state.playToken && hasPlayed) {
+        showPlayerMessage('Appuyez sur ▶ pour lancer la lecture.');
+      }
+    });
+  }
+}
+
+function startHls(item, token, allowFallback) {
+  if (token !== state.playToken) return;
+  destroyEngines();
+  const label = item.name || 'Chaîne';
+  $('player-subtitle').textContent = 'Direct HLS · ' + label;
   showPlayerMessage('Connexion au direct...');
+
   const url = params('play', { id: item.stream_id });
   const video = $('video');
+
   if (window.Hls && Hls.isSupported()) {
-    const hls = new Hls({ lowLatencyMode: true, backBufferLength: 30, maxBufferLength: 15 }); state.hls = hls;
-    hls.loadSource(url); hls.attachMedia(video);
-    hls.on(Hls.Events.MANIFEST_PARSED, () => { showPlayerMessage(''); video.play().catch(() => showPlayerMessage('Appuyez sur ▶ pour lancer la lecture.')); });
-    hls.on(Hls.Events.ERROR, (_event, data) => {
-      if (!data.fatal) return;
-      showPlayerMessage('Lecture HLS impossible. Ce fournisseur doit proposer un flux .m3u8 compatible (et non uniquement un .ts).');
-      if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
+    const hls = new Hls({
+      lowLatencyMode: false,
+      backBufferLength: 30,
+      maxBufferLength: 20,
+      manifestLoadingTimeOut: 12000,
+      manifestLoadingMaxRetry: allowFallback ? 0 : 1,
+      levelLoadingTimeOut: 12000,
+      fragLoadingTimeOut: 15000
     });
-  } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-    video.src = url; video.play().catch(() => showPlayerMessage('Appuyez sur ▶ pour lancer la lecture.'));
-  } else showPlayerMessage('Ce navigateur ne prend pas en charge la lecture HLS.');
-  // Fullscreen requests may be rejected by TV browsers; the overlay remains full-window.
-  if (video.requestFullscreen) video.requestFullscreen().catch(() => {});
+    state.hls = hls;
+    let manifestReady = false;
+
+    hls.loadSource(url);
+    hls.attachMedia(video);
+
+    hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      if (token !== state.playToken) return;
+      manifestReady = true;
+      showPlayerMessage('');
+      video.play().catch(() => showPlayerMessage('Appuyez sur ▶ pour lancer la lecture.'));
+    });
+
+    hls.on(Hls.Events.ERROR, (_event, data) => {
+      if (token !== state.playToken || !data.fatal) return;
+      if (data.type === Hls.ErrorTypes.MEDIA_ERROR && manifestReady) {
+        hls.recoverMediaError();
+        return;
+      }
+      if (allowFallback && mpegtsSupported()) {
+        destroyEngines();
+        state.reconnectTimer = setTimeout(() => startMpegTs(item, token, true), 150);
+        return;
+      }
+      showPlayerMessage('Flux HLS indisponible sur cette chaîne. Essayez le mode MPEG-TS ou une autre chaîne.', true);
+    });
+    return;
+  }
+
+  if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    const onNativeError = () => {
+      if (token !== state.playToken) return;
+      if (allowFallback && mpegtsSupported()) {
+        startMpegTs(item, token, true);
+      } else {
+        showPlayerMessage('Ce flux n’est pas disponible en HLS natif sur cet appareil.', true);
+      }
+    };
+    video.addEventListener('error', onNativeError, { once: true });
+    video.src = url;
+    video.play().catch(() => showPlayerMessage('Appuyez sur ▶ pour lancer la lecture.'));
+    return;
+  }
+
+  if (allowFallback && mpegtsSupported()) {
+    startMpegTs(item, token, true);
+    return;
+  }
+  showPlayerMessage('Ce navigateur ne prend pas en charge la lecture HLS ou MPEG-TS.', true);
 }
+
+function play(item, keepFullscreen = false) {
+  destroyPlayback();
+  const token = state.playToken;
+  state.current = item;
+  const label = item.name || 'Chaîne';
+  $('player-title').textContent = label;
+  $('player-overlay').hidden = false;
+  document.body.style.overflow = 'hidden';
+  updateModeButtons();
+  if (!keepFullscreen) $('close-player').focus();
+
+  if (state.mode === 'ts') {
+    startMpegTs(item, token, false);
+  } else {
+    startHls(item, token, state.mode === 'auto');
+  }
+}
+
 function closePlayer() {
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   destroyPlayback(); state.current = null; $('player-overlay').hidden = true; document.body.style.overflow = ''; $('search').focus();
@@ -170,8 +395,15 @@ $('close-settings').addEventListener('click', closeSettings);
 $('settings-overlay').addEventListener('click', (event) => { if (event.target === $('settings-overlay')) closeSettings(); });
 $('close-player').addEventListener('click', closePlayer);
 $('fullscreen').addEventListener('click', () => { const video = $('video'); if (document.fullscreenElement) document.exitFullscreen(); else if (video.requestFullscreen) video.requestFullscreen().catch(() => {}); else if (video.webkitEnterFullscreen) video.webkitEnterFullscreen(); });
+document.querySelectorAll('.mode-btn').forEach((btn) => {
+  btn.addEventListener('click', () => setMode(btn.dataset.mode));
+});
 $('video').addEventListener('playing', () => showPlayerMessage(''));
-$('video').addEventListener('error', () => { if (state.current) showPlayerMessage('Le flux vidéo est indisponible ou son format n’est pas compatible avec cet appareil.'); });
+$('video').addEventListener('error', () => {
+  if (state.current && !state.hls && !state.mpegts) {
+    showPlayerMessage('Le flux vidéo est indisponible ou son format n’est pas compatible avec cet appareil.', true);
+  }
+});
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' || event.key === 'Backspace' && event.target.tagName !== 'INPUT') {
     if (!$('settings-overlay').hidden) { closeSettings(); event.preventDefault(); }
@@ -190,4 +422,5 @@ document.addEventListener('keydown', (event) => {
     if (choices.length) { event.preventDefault(); choices[0].el.focus(); choices[0].el.scrollIntoView({ block: 'nearest' }); }
   }
 });
+updateModeButtons();
 load();
