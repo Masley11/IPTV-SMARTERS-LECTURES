@@ -5,7 +5,27 @@
 const EMPTY_CREDS = { server: '', username: '', password: '' };
 const STORAGE_KEY = 'onda-xtream-settings';
 const MODE_KEY = 'onda-stream-mode';
+const LAST_PLAY_KEY = 'onda-last-play-ts';
+const LOCAL_COOLDOWN_MS = 45000;
+const MAX_ZAP_WAIT_MS = 25000;
 const $ = (id) => document.getElementById(id);
+
+function readLastLocalPlayAt() {
+  try {
+    const v = Number(sessionStorage.getItem(LAST_PLAY_KEY) || 0);
+    return Number.isFinite(v) && v > 0 ? v : 0;
+  } catch { return 0; }
+}
+
+function markLocalPlay() {
+  const now = Date.now();
+  state.lastLocalPlayAt = now;
+  try { sessionStorage.setItem(LAST_PLAY_KEY, String(now)); } catch { /* ignore */ }
+}
+
+function isOwnSessionCoolingDown() {
+  return state.lastLocalPlayAt > 0 && (Date.now() - state.lastLocalPlayAt) < LOCAL_COOLDOWN_MS;
+}
 
 const state = {
   categories: [],
@@ -20,8 +40,10 @@ const state = {
   hls: null,
   mpegts: null,
   reconnectTimer: null,
+  accountRefreshTimer: null,
   playToken: 0,
-  lastLocalPlayAt: 0,
+  zapStartedAt: 0,
+  lastLocalPlayAt: readLastLocalPlayAt(),
   localStreaming: false,
   current: null,
   loading: false,
@@ -258,7 +280,10 @@ function updateSubtitle(itemsCount) {
   let text = count.toLocaleString('fr-FR') + ' chaîne' + (count > 1 ? 's' : '') + ' disponible' + (count > 1 ? 's' : '');
   if (state.account && state.account.maxConnections > 0) {
     const { activeConnections, maxConnections } = state.account;
-    if (activeConnections >= maxConnections && !state.localStreaming) {
+    const ownSession = state.localStreaming || isOwnSessionCoolingDown();
+    if (ownSession) {
+      text += ` · Connexion prête sur cet écran`;
+    } else if (activeConnections >= maxConnections) {
       text += ` · ⚠ ${activeConnections}/${maxConnections} connexion utilisée sur un autre appareil`;
     } else {
       text += ` · Connexion libre (${activeConnections}/${maxConnections} active)`;
@@ -462,7 +487,7 @@ function setMode(nextMode) {
 
 function destroyEngines() {
   if (state.localStreaming) {
-    state.lastLocalPlayAt = Date.now();
+    markLocalPlay();
     state.localStreaming = false;
   }
   if (state.reconnectTimer) {
@@ -470,7 +495,11 @@ function destroyEngines() {
     state.reconnectTimer = null;
   }
   if (state.hls) {
-    try { state.hls.destroy(); } catch { /* ignore */ }
+    try {
+      state.hls.stopLoad();
+      state.hls.detachMedia();
+      state.hls.destroy();
+    } catch { /* ignore */ }
     state.hls = null;
   }
   if (state.mpegts) {
@@ -512,7 +541,11 @@ function showPlayerMessage(text, retryable = false) {
 }
 
 function zappingParam() {
-  return Date.now() - state.lastLocalPlayAt < 18000 ? { zapping: '1' } : {};
+  return isOwnSessionCoolingDown() ? { zapping: '1' } : {};
+}
+
+function canAutoWaitZapping() {
+  return isOwnSessionCoolingDown() && state.zapStartedAt > 0 && (Date.now() - state.zapStartedAt) < MAX_ZAP_WAIT_MS;
 }
 
 function formatMaxConnMessage(account) {
@@ -563,7 +596,7 @@ function startMpegTs(item, token, fromFallback = false, allowHlsFallback = false
     if (token !== state.playToken) return;
     hasPlayed = true;
     state.localStreaming = true;
-    state.lastLocalPlayAt = Date.now();
+    markLocalPlay();
     showPlayerMessage('');
   };
   video.addEventListener('playing', markPlaying, { once: true });
@@ -577,6 +610,12 @@ function startMpegTs(item, token, fromFallback = false, allowHlsFallback = false
     }
     const statusCode = errorInfo && errorInfo.code;
     if (statusCode === 429) {
+      destroyEngines();
+      if (canAutoWaitZapping()) {
+        showPlayerMessage('Changement de chaîne : fermeture du flux précédent auprès du serveur, démarrage automatique...');
+        state.reconnectTimer = setTimeout(() => startMpegTs(item, token, fromFallback, allowHlsFallback), 1800);
+        return;
+      }
       refreshAccount().then((acc) => {
         if (token === state.playToken) showPlayerMessage(formatMaxConnMessage(acc), true);
       });
@@ -629,30 +668,32 @@ function startMpegTs(item, token, fromFallback = false, allowHlsFallback = false
   }
 }
 
-function startHls(item, token, allowFallback) {
+function startHls(item, token, allowFallback, retryingZap = false) {
   if (token !== state.playToken) return;
   destroyEngines();
   const label = item.name || 'Chaîne';
   $('player-subtitle').textContent = 'Direct HLS · ' + label;
-  showPlayerMessage('Connexion au direct...');
+  showPlayerMessage(retryingZap
+    ? 'Changement de chaîne : fermeture du flux précédent auprès du serveur, démarrage automatique...'
+    : 'Connexion au direct...');
 
-  const url = params('play', { id: item.stream_id, ...zappingParam() });
+  const url = params('play', { id: item.stream_id, ...zappingParam(), _t: Date.now() });
   const video = $('video');
 
   if (window.Hls && Hls.isSupported()) {
     const hls = new Hls({
       lowLatencyMode: false,
       liveSyncDurationCount: 3,
-      liveMaxLatencyDurationCount: 10,
-      backBufferLength: 30,
-      maxBufferLength: 50,
-      maxMaxBufferLength: 90,
+      liveMaxLatencyDurationCount: 8,
+      backBufferLength: 20,
+      maxBufferLength: 24,
+      maxMaxBufferLength: 45,
       maxBufferHole: 0.8,
       highBufferWatchdogPeriod: 3,
       nudgeOffset: 0.2,
       nudgeMaxRetry: 5,
       manifestLoadingTimeOut: 20000,
-      manifestLoadingMaxRetry: allowFallback ? 1 : 3,
+      manifestLoadingMaxRetry: allowFallback ? 1 : 2,
       manifestLoadingRetryDelay: 700,
       levelLoadingTimeOut: 20000,
       levelLoadingMaxRetry: 4,
@@ -668,17 +709,24 @@ function startHls(item, token, allowFallback) {
     hls.loadSource(url);
     hls.attachMedia(video);
 
+    hls.on(Hls.Events.LEVEL_LOADED, () => {
+      if (token === state.playToken) markLocalPlay();
+    });
+
     hls.on(Hls.Events.MANIFEST_PARSED, () => {
       if (token !== state.playToken) return;
       manifestReady = true;
       state.localStreaming = true;
-      state.lastLocalPlayAt = Date.now();
+      markLocalPlay();
       showPlayerMessage('');
       video.play().catch(() => showPlayerMessage('Appuyez sur ▶ pour lancer la lecture.'));
     });
 
     hls.on(Hls.Events.FRAG_BUFFERED, () => {
-      if (token === state.playToken) networkRecoveries = 0;
+      if (token === state.playToken) {
+        networkRecoveries = 0;
+        markLocalPlay();
+      }
     });
 
     hls.on(Hls.Events.ERROR, (_event, data) => {
@@ -699,6 +747,11 @@ function startHls(item, token, allowFallback) {
       const httpCode = data.response && data.response.code;
       if (httpCode === 429) {
         destroyEngines();
+        if (canAutoWaitZapping()) {
+          showPlayerMessage('Changement de chaîne : fermeture du flux précédent auprès du serveur, démarrage automatique...');
+          state.reconnectTimer = setTimeout(() => startHls(item, token, allowFallback, true), 1800);
+          return;
+        }
         refreshAccount().then((acc) => {
           if (token === state.playToken) showPlayerMessage(formatMaxConnMessage(acc), true);
         });
@@ -723,6 +776,11 @@ function startHls(item, token, allowFallback) {
   if (video.canPlayType('application/vnd.apple.mpegurl')) {
     const onNativeError = async () => {
       if (token !== state.playToken) return;
+      if (canAutoWaitZapping()) {
+        showPlayerMessage('Changement de chaîne : fermeture du flux précédent auprès du serveur, démarrage automatique...');
+        state.reconnectTimer = setTimeout(() => startHls(item, token, allowFallback, true), 1800);
+        return;
+      }
       const acc = await refreshAccount();
       if (token !== state.playToken) return;
       if (acc && acc.maxConnections > 0 && acc.activeConnections >= acc.maxConnections) {
@@ -739,7 +797,7 @@ function startHls(item, token, allowFallback) {
     video.addEventListener('playing', () => {
       if (token === state.playToken) {
         state.localStreaming = true;
-        state.lastLocalPlayAt = Date.now();
+        markLocalPlay();
       }
     }, { once: true });
     video.src = url;
@@ -755,8 +813,13 @@ function startHls(item, token, allowFallback) {
 }
 
 function play(item, keepFullscreen = false) {
+  if (state.accountRefreshTimer) {
+    clearTimeout(state.accountRefreshTimer);
+    state.accountRefreshTimer = null;
+  }
   destroyPlayback();
   const token = state.playToken;
+  state.zapStartedAt = Date.now();
   state.current = item;
   const label = item.name || 'Chaîne';
   $('player-title').textContent = label;
@@ -774,9 +837,22 @@ function play(item, keepFullscreen = false) {
 
 function closePlayer() {
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-  destroyPlayback(); state.current = null; $('player-overlay').hidden = true; document.body.style.overflow = ''; $('search').focus();
-  setTimeout(() => refreshAccount(), 2000);
+  destroyPlayback();
+  state.current = null;
+  $('player-overlay').hidden = true;
+  document.body.style.overflow = '';
+  if (!state.loading && state.streams.length) updateSubtitle();
+  $('search').focus();
+  if (state.accountRefreshTimer) clearTimeout(state.accountRefreshTimer);
+  // Attend que le serveur Xtream purge sa session HLS (~20-25s) avant de rafraîchir le compteur
+  state.accountRefreshTimer = setTimeout(() => {
+    state.accountRefreshTimer = null;
+    if ($('player-overlay').hidden) refreshAccount();
+  }, 26000);
 }
+
+window.addEventListener('pagehide', destroyPlayback);
+window.addEventListener('beforeunload', destroyPlayback);
 
 // --- Modales : Paramètres, Association TV QR Code, Télécommande Mobile & À propos ---
 function closeAllModals() {

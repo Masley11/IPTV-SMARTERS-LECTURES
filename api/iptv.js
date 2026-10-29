@@ -169,6 +169,7 @@ async function singleFetch(url, timeoutMs, externalSignal, headers) {
       headers: {
         'User-Agent': USER_AGENT,
         'Accept': '*/*',
+        'Connection': 'close',
         ...(headers || {})
       },
       redirect: 'manual',
@@ -243,7 +244,10 @@ async function fetchAccountInfo(base, isLocked, auth, signal) {
     api.searchParams.set('username', auth.username);
     api.searchParams.set('password', auth.password);
     const { response } = await upstreamFetch(api.href, { base, isLocked, signal, connectTimeoutMs: 6000 });
-    if (!response.ok) return null;
+    if (!response.ok) {
+      try { await response.body?.cancel(); } catch { /* ignore */ }
+      return null;
+    }
     const data = await response.json();
     const info = data && data.user_info;
     if (!info || typeof info !== 'object') return null;
@@ -353,25 +357,37 @@ function rewriteManifest(text, manifestURL, auth, baseOverride, isLockedOverride
     .join('\n');
 }
 
-async function peekBody(webBody, minBytes = 512) {
+async function peekBody(webBody, minBytes = 512, abortSignal) {
   if (!webBody) return { head: Buffer.alloc(0), reader: null, done: true };
   const reader = webBody.getReader();
+  const onAbort = () => { reader.cancel().catch(() => {}); };
+  if (abortSignal) {
+    if (abortSignal.aborted) {
+      onAbort();
+      throw new Error('Requête annulée');
+    }
+    abortSignal.addEventListener('abort', onAbort, { once: true });
+  }
   const chunks = [];
   let total = 0;
   let done = false;
-  while (total < minBytes) {
-    const step = await reader.read();
-    if (step.done) {
-      done = true;
-      break;
+  try {
+    while (total < minBytes) {
+      const step = await reader.read();
+      if (step.done) {
+        done = true;
+        break;
+      }
+      if (step.value && step.value.byteLength) {
+        const buf = Buffer.from(step.value.buffer, step.value.byteOffset, step.value.byteLength);
+        chunks.push(buf);
+        total += buf.length;
+      }
     }
-    if (step.value && step.value.byteLength) {
-      const buf = Buffer.from(step.value.buffer, step.value.byteOffset, step.value.byteLength);
-      chunks.push(buf);
-      total += buf.length;
-    }
+    return { head: Buffer.concat(chunks, total), reader, done };
+  } finally {
+    if (abortSignal) abortSignal.removeEventListener('abort', onAbort);
   }
-  return { head: Buffer.concat(chunks, total), reader, done };
 }
 
 async function readRemainingBytes(head, reader, done, maxBytes) {
@@ -405,6 +421,8 @@ async function streamReaderToResponse(head, reader, done, res, abortSignal) {
     res.end();
     return;
   }
+  const onAbort = () => { reader.cancel().catch(() => {}); };
+  if (abortSignal) abortSignal.addEventListener('abort', onAbort, { once: true });
   try {
     while (!abortSignal?.aborted && !res.destroyed) {
       const step = await reader.read();
@@ -416,6 +434,7 @@ async function streamReaderToResponse(head, reader, done, res, abortSignal) {
       }
     }
   } finally {
+    if (abortSignal) abortSignal.removeEventListener('abort', onAbort);
     try { await reader.cancel(); } catch { /* ignore */ }
     if (!res.writableEnded) res.end();
   }
@@ -439,6 +458,8 @@ async function deliverSegment(head, reader, done, contentType, contentLengthHead
   const chunks = head.length ? [head] : [];
   let total = head.length;
   let overflowed = false;
+  const onAbort = () => { reader.cancel().catch(() => {}); };
+  if (abortSignal) abortSignal.addEventListener('abort', onAbort, { once: true });
   try {
     while (!abortSignal?.aborted && !res.destroyed) {
       const step = await reader.read();
@@ -456,6 +477,8 @@ async function deliverSegment(head, reader, done, contentType, contentLengthHead
   } catch (err) {
     try { await reader.cancel(); } catch { /* ignore */ }
     throw err;
+  } finally {
+    if (abortSignal) abortSignal.removeEventListener('abort', onAbort);
   }
 
   if (abortSignal?.aborted || res.destroyed) {
@@ -548,11 +571,20 @@ module.exports = async function handler(req, res) {
   res.setHeader('X-Content-Type-Options', 'nosniff');
 
   const requestAbort = new AbortController();
-  const abortNow = () => requestAbort.abort();
-  req.on('aborted', abortNow);
-  res.on('close', () => {
+  const abortNow = () => {
+    if (!requestAbort.signal.aborted) requestAbort.abort();
+  };
+  const onPrematureClose = () => {
     if (!res.writableFinished) abortNow();
-  });
+  };
+  req.on('aborted', abortNow);
+  req.on('close', onPrematureClose);
+  res.on('close', onPrematureClose);
+  const clientSocket = req.socket;
+  if (clientSocket) {
+    clientSocket.once('close', onPrematureClose);
+    res.once('finish', () => clientSocket.removeListener('close', onPrematureClose));
+  }
 
   try {
     const query = new URL(req.url, 'http://localhost').searchParams;
@@ -652,7 +684,7 @@ module.exports = async function handler(req, res) {
     const auth = credentials({ username: query.get('username'), password: query.get('password') });
     const id = query.get('id');
     const isZapping = query.get('zapping') === '1';
-    const lockRetries = isZapping ? [1200, 1800, 2200, 2500] : [1100];
+    const lockRetries = isZapping ? [800, 1200] : [900];
 
     if (action === 'account') {
       const info = await fetchAccountInfo(base, isLocked, auth, requestAbort.signal);
@@ -667,7 +699,10 @@ module.exports = async function handler(req, res) {
       api.searchParams.set('password', auth.password);
       api.searchParams.set('action', action === 'categories' ? 'get_live_categories' : 'get_live_streams');
       const { response } = await upstreamFetch(api.href, { base, isLocked, signal: requestAbort.signal });
-      if (!response.ok) return fail(res, 502, `Le serveur IPTV a répondu ${response.status}`);
+      if (!response.ok) {
+        try { await response.body?.cancel(); } catch { /* ignore */ }
+        return fail(res, 502, `Le serveur IPTV a répondu ${response.status}`);
+      }
       const length = Number(response.headers.get('content-length') || 0);
       if (length > MAX_JSON_BYTES) return fail(res, 502, 'Liste trop volumineuse');
       const text = await response.text();
@@ -709,7 +744,7 @@ module.exports = async function handler(req, res) {
 
       let firstByteTimer;
       const { head, reader, done } = await Promise.race([
-        peekBody(upstream.response.body, 188),
+        peekBody(upstream.response.body, 188, requestAbort.signal),
         new Promise((_, reject) => {
           firstByteTimer = setTimeout(() => reject(new Error('Chaîne hors antenne ou délai dépassé')), 12000);
         })
@@ -767,6 +802,7 @@ module.exports = async function handler(req, res) {
 
     const { response, finalURL } = fetched;
     if (!response.ok) {
+      try { await response.body?.cancel(); } catch { /* ignore */ }
       const diag = action === 'play'
         ? await diagnoseAuthRejection(base, isLocked, auth, response.status, requestAbort.signal)
         : { status: 502, message: `Le serveur IPTV a répondu ${response.status}`, extra: {} };
@@ -774,7 +810,7 @@ module.exports = async function handler(req, res) {
     }
 
     const contentType = response.headers.get('content-type') || '';
-    const { head, reader, done } = await peekBody(response.body, 512);
+    const { head, reader, done } = await peekBody(response.body, 512, requestAbort.signal);
 
     if (looksLikeHLS(head)) {
       const fullBuf = await readRemainingBytes(head, reader, done, MAX_MANIFEST_BYTES);

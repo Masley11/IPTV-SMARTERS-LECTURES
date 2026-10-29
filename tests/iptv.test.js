@@ -8,8 +8,10 @@ function close(server) { return new Promise(resolve => server.close(resolve)); }
 test('catalogue, compte 1/1, redirection load-balancer HLS signée, flux MPEG-TS, QR pairing chiffré et garde-fou SSRF', async () => {
   let edgePort = 0;
   let activeCons = '0';
+  let lastUpstreamConnectionHeader = '';
 
   const edge = http.createServer((req, res) => {
+    lastUpstreamConnectionHeader = String(req.headers.connection || '');
     if (req.url === '/live/play/tok123/77.m3u8') {
       res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
       return res.end('#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI="/keys/77.key"\n#EXTINF:6,\n/hlsr/tok123/77_1.ts\n');
@@ -117,6 +119,7 @@ test('catalogue, compte 1/1, redirection load-balancer HLS signée, flux MPEG-TS
     const edgeSegResp = await fetch(new URL(edgeSegLine, origin));
     assert.equal(edgeSegResp.status, 200);
     assert.equal(await edgeSegResp.text(), 'edge-segment-data');
+    assert.equal(lastUpstreamConnectionHeader.toLowerCase(), 'close');
 
     // 4. Detection of raw MPEG-TS on play + live streaming via action=ts
     const rawTsPlay = await fetch(base + '&action=play&id=88');
