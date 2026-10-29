@@ -292,10 +292,10 @@ function startHls(item, token, allowFallback) {
       lowLatencyMode: false,
       backBufferLength: 30,
       maxBufferLength: 20,
-      manifestLoadingTimeOut: 12000,
+      manifestLoadingTimeOut: 20000,
       manifestLoadingMaxRetry: allowFallback ? 0 : 1,
-      levelLoadingTimeOut: 12000,
-      fragLoadingTimeOut: 15000
+      levelLoadingTimeOut: 15000,
+      fragLoadingTimeOut: 20000
     });
     state.hls = hls;
     let manifestReady = false;

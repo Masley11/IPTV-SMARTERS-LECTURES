@@ -160,7 +160,7 @@ async function upstreamFetch(initialPath, options = {}) {
 
   const timeoutMs = options.connectTimeoutMs || 20000;
   const externalSignal = options.signal;
-  const maxSlotRetries = options.retryTransientLock ? 2 : 0;
+  const retryDelays = options.retryTransientLock ? [1200, 1800, 2200, 2500] : [];
 
   for (let hop = 0; hop < 6; hop++) {
     let attempt = 0;
@@ -168,11 +168,11 @@ async function upstreamFetch(initialPath, options = {}) {
     let detachAbort;
     while (true) {
       ({ response, detachAbort } = await singleFetch(url, timeoutMs, externalSignal, options.headers));
-      if (attempt < maxSlotRetries && [401, 403, 429, 458, 503].includes(response.status)) {
+      if (attempt < retryDelays.length && [401, 403, 429, 458, 503].includes(response.status)) {
         detachAbort();
         try { await response.body?.cancel(); } catch { /* ignore */ }
-        attempt++;
-        await sleep(1100 * attempt, externalSignal);
+        const delay = retryDelays[attempt++];
+        await sleep(delay, externalSignal);
         continue;
       }
       break;
