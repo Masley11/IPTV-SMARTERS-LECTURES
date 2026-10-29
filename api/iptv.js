@@ -107,6 +107,52 @@ function verifyResource(targetHref, username, exp, sig) {
   return crypto.timingSafeEqual(expected, provided);
 }
 
+function sleep(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(new Error('Requête annulée'));
+    const timer = setTimeout(() => {
+      if (signal) signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    function onAbort() {
+      clearTimeout(timer);
+      reject(new Error('Requête annulée'));
+    }
+    if (signal) signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+async function singleFetch(url, timeoutMs, externalSignal, headers) {
+  const hopController = new AbortController();
+  const timer = setTimeout(() => hopController.abort(new Error('Délai de connexion dépassé')), timeoutMs);
+  const onAbort = () => hopController.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      clearTimeout(timer);
+      throw new Error('Requête annulée');
+    }
+    externalSignal.addEventListener('abort', onAbort, { once: true });
+  }
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'User-Agent': USER_AGENT,
+        'Accept': '*/*',
+        ...(headers || {})
+      },
+      redirect: 'manual',
+      signal: hopController.signal
+    });
+    return { response, detachAbort: () => externalSignal?.removeEventListener('abort', onAbort) };
+  } catch (err) {
+    if (externalSignal) externalSignal.removeEventListener('abort', onAbort);
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function upstreamFetch(initialPath, options = {}) {
   const base = getBaseURL();
   let url = upstreamURL(initialPath, { allowExternal: Boolean(options.allowExternal) });
@@ -114,46 +160,36 @@ async function upstreamFetch(initialPath, options = {}) {
 
   const timeoutMs = options.connectTimeoutMs || 20000;
   const externalSignal = options.signal;
+  const maxSlotRetries = options.retryTransientLock ? 2 : 0;
 
   for (let hop = 0; hop < 6; hop++) {
-    const hopController = new AbortController();
-    const timer = setTimeout(() => hopController.abort(new Error('Délai de connexion dépassé')), timeoutMs);
-    const onAbort = () => hopController.abort();
-    if (externalSignal) {
-      if (externalSignal.aborted) {
-        clearTimeout(timer);
-        throw new Error('Requête annulée');
-      }
-      externalSignal.addEventListener('abort', onAbort, { once: true });
-    }
+    let attempt = 0;
     let response;
-    try {
-      response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'User-Agent': USER_AGENT,
-          'Accept': '*/*',
-          ...(options.headers || {})
-        },
-        redirect: 'manual',
-        signal: hopController.signal
-      });
-    } catch (err) {
-      if (externalSignal) externalSignal.removeEventListener('abort', onAbort);
-      throw err;
-    } finally {
-      clearTimeout(timer);
+    let detachAbort;
+    while (true) {
+      ({ response, detachAbort } = await singleFetch(url, timeoutMs, externalSignal, options.headers));
+      if (attempt < maxSlotRetries && [401, 403, 429, 458, 503].includes(response.status)) {
+        detachAbort();
+        try { await response.body?.cancel(); } catch { /* ignore */ }
+        attempt++;
+        await sleep(1100 * attempt, externalSignal);
+        continue;
+      }
+      break;
     }
 
     if (![301, 302, 303, 307, 308].includes(response.status)) {
       return { response, finalURL: url.href };
     }
-    if (externalSignal) externalSignal.removeEventListener('abort', onAbort);
+    detachAbort();
     try { await response.body?.cancel(); } catch { /* ignore */ }
     const next = response.headers.get('location');
     if (!next) throw new Error('Redirection sans destination');
     const nextURL = new URL(next, url);
     await assertSafeExternalURL(nextURL, base);
+    if (options.returnRedirectTarget && nextURL.href !== url.href) {
+      return { response: null, redirectURL: nextURL.href, finalURL: nextURL.href };
+    }
     url = nextURL;
   }
   throw new Error('Trop de redirections');
@@ -168,7 +204,7 @@ function credentials(query) {
   return { username, password };
 }
 
-function playbackURL(query, targetHref) {
+function playbackURL(query, targetHref, extra = {}) {
   const resolved = String(targetHref);
   const base = getBaseURL();
   const parsed = new URL(resolved, base);
@@ -180,7 +216,8 @@ function playbackURL(query, targetHref) {
     action: 'resource',
     username: query.username,
     password: query.password,
-    id: parsed.href
+    id: parsed.href,
+    ...extra
   });
   if (parsed.origin !== base.origin) {
     params.set('exp', exp);
@@ -190,22 +227,27 @@ function playbackURL(query, targetHref) {
 }
 
 function rewriteManifest(text, manifestURL, query) {
-  const wrap = (value) => {
+  const wrap = (value, isVariant = false) => {
     const absolute = new URL(value.trim(), manifestURL);
     if (!['http:', 'https:'].includes(absolute.protocol)) {
       throw new Error('Protocole de segment invalide');
     }
-    return playbackURL(query, absolute.href);
+    const extra = isVariant || /\.m3u8(?:\?|$)/i.test(absolute.pathname + absolute.search) ? { manifest: '1' } : {};
+    return playbackURL(query, absolute.href, extra);
   };
-  return text
-    .split(/\r?\n/)
+  const lines = text.split(/\r?\n/);
+  let nextIsVariant = false;
+  return lines
     .map((line) => {
       const trimmed = line.trim();
       if (!trimmed) return line;
       if (trimmed.startsWith('#')) {
-        return line.replace(/URI="([^"]+)"/gi, (_, value) => `URI="${wrap(value)}"`);
+        if (/^#EXT-X-STREAM-INF:/i.test(trimmed)) nextIsVariant = true;
+        return line.replace(/URI="([^"]+)"/gi, (_, value) => `URI="${wrap(value, false)}"`);
       }
-      return wrap(trimmed);
+      const isVar = nextIsVariant;
+      nextIsVariant = false;
+      return wrap(trimmed, isVar);
     })
     .join('\n');
 }
@@ -351,7 +393,7 @@ module.exports = async function handler(req, res) {
         const result = await upstreamFetch(candidate, {
           signal: requestAbort.signal,
           connectTimeoutMs: 15000,
-          keepOpenAfterHeaders: true
+          retryTransientLock: true
         });
         lastStatus = result.response.status;
         if (result.response.ok) {
@@ -384,6 +426,8 @@ module.exports = async function handler(req, res) {
 
     let targetPath;
     let allowExternal = false;
+    const expectsManifest = action === 'play' || query.get('manifest') === '1';
+
     if (action === 'play') {
       if (!/^\d{1,12}$/.test(id || '')) return fail(res, 400, 'Chaîne invalide');
       targetPath = `/live/${encodeURIComponent(auth.username)}/${encodeURIComponent(auth.password)}/${id}.m3u8`;
@@ -403,11 +447,21 @@ module.exports = async function handler(req, res) {
       return fail(res, 400, 'Action invalide');
     }
 
-    const { response, finalURL } = await upstreamFetch(targetPath, {
+    const fetched = await upstreamFetch(targetPath, {
       allowExternal,
       signal: requestAbort.signal,
-      connectTimeoutMs: 15000
+      connectTimeoutMs: 15000,
+      retryTransientLock: action === 'play',
+      returnRedirectTarget: action === 'play'
     });
+
+    if (fetched.redirectURL) {
+      res.statusCode = 302;
+      res.setHeader('Location', playbackURL(auth, fetched.redirectURL, { manifest: '1' }));
+      return res.end();
+    }
+
+    const { response, finalURL } = fetched;
     if (!response.ok) return fail(res, 502, `Le serveur IPTV a répondu ${response.status}`);
 
     const contentType = response.headers.get('content-type') || '';
@@ -417,13 +471,10 @@ module.exports = async function handler(req, res) {
       const fullBuf = await readRemainingBytes(head, reader, done, MAX_MANIFEST_BYTES);
       const rewritten = rewriteManifest(fullBuf.toString('utf8'), finalURL, auth);
       res.setHeader('Content-Type', 'application/vnd.apple.mpegurl; charset=utf-8');
-      if (action === 'play' && finalURL !== new URL(targetPath, base).href) {
-        res.setHeader('X-Session-Manifest', playbackURL(auth, finalURL));
-      }
       return res.end(rewritten);
     }
 
-    if (action === 'play') {
+    if (expectsManifest) {
       try { await reader?.cancel(); } catch { /* ignore */ }
       if (looksLikeMpegTS(head, contentType)) {
         return fail(res, 415, 'Ce flux est diffusé en MPEG-TS direct (.ts)', { code: 'MPEGTS_DIRECT' });
