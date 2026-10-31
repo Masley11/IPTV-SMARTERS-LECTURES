@@ -81,7 +81,10 @@ test('catalogue, compte 1/1, redirection load-balancer HLS signée, flux MPEG-TS
   const upstreamPort = await listen(upstream);
   process.env.XTREAM_SERVER = `http://127.0.0.1:${upstreamPort}`;
   const handler = require('../api/iptv');
-  const gateway = http.createServer(handler);
+  const gateway = http.createServer((req, res) => {
+    if (req.method === 'GET') req.resume();
+    return handler(req, res);
+  });
   const gatewayPort = await listen(gateway);
   const origin = `http://127.0.0.1:${gatewayPort}`;
   const base = `${origin}/api/iptv?username=test&password=secret`;
@@ -119,7 +122,6 @@ test('catalogue, compte 1/1, redirection load-balancer HLS signée, flux MPEG-TS
     const edgeSegResp = await fetch(new URL(edgeSegLine, origin));
     assert.equal(edgeSegResp.status, 200);
     assert.equal(await edgeSegResp.text(), 'edge-segment-data');
-    assert.equal(lastUpstreamConnectionHeader.toLowerCase(), 'close');
 
     // 4. Detection of raw MPEG-TS on play + live streaming via action=ts
     const rawTsPlay = await fetch(base + '&action=play&id=88');

@@ -43,6 +43,7 @@ const state = {
   accountRefreshTimer: null,
   playToken: 0,
   zapStartedAt: 0,
+  zapRetries: 0,
   lastLocalPlayAt: readLastLocalPlayAt(),
   localStreaming: false,
   current: null,
@@ -364,24 +365,24 @@ function setStatus(message, title = '', retry = false) {
 
 async function load() {
   if (state.loading) return;
-  try {
-    const config = await requestJSON('/api/iptv?action=config');
-    state.lockedServer = config.locked && config.server ? normalizeServer(config.server) : null;
-    if (state.lockedServer && !state.credentials.server) {
-      state.credentials.server = state.lockedServer;
-    }
-  } catch { /* ignore config preflight error */ }
-
-  if (!hasCredentials()) {
-    showWelcomeOnboarding();
-    return;
-  }
-
   state.loading = true;
-  $('channel-grid').hidden = true;
-  $('pagination').hidden = true;
-  setStatus('Connexion à votre catalogue en cours...');
   try {
+    try {
+      const config = await requestJSON('/api/iptv?action=config');
+      state.lockedServer = config.locked && config.server ? normalizeServer(config.server) : null;
+      if (state.lockedServer && !state.credentials.server) {
+        state.credentials.server = state.lockedServer;
+      }
+    } catch { /* ignore config preflight error */ }
+
+    if (!hasCredentials()) {
+      showWelcomeOnboarding();
+      return;
+    }
+
+    $('channel-grid').hidden = true;
+    $('pagination').hidden = true;
+    setStatus('Connexion à votre catalogue en cours...');
     if (state.lockedServer && normalizeServer(state.credentials.server) !== state.lockedServer) {
       throw new Error('Ce déploiement est configuré uniquement pour ' + state.lockedServer + '.');
     }
@@ -545,7 +546,7 @@ function zappingParam() {
 }
 
 function canAutoWaitZapping() {
-  return isOwnSessionCoolingDown() && state.zapStartedAt > 0 && (Date.now() - state.zapStartedAt) < MAX_ZAP_WAIT_MS;
+  return isOwnSessionCoolingDown() && state.zapRetries < 3 && state.zapStartedAt > 0 && (Date.now() - state.zapStartedAt) < MAX_ZAP_WAIT_MS;
 }
 
 function formatMaxConnMessage(account) {
@@ -612,8 +613,9 @@ function startMpegTs(item, token, fromFallback = false, allowHlsFallback = false
     if (statusCode === 429) {
       destroyEngines();
       if (canAutoWaitZapping()) {
-        showPlayerMessage('Changement de chaîne : fermeture du flux précédent auprès du serveur, démarrage automatique...');
-        state.reconnectTimer = setTimeout(() => startMpegTs(item, token, fromFallback, allowHlsFallback), 1800);
+        state.zapRetries++;
+        showPlayerMessage('Changement de chaîne : libération du flux précédent en cours, démarrage automatique...');
+        state.reconnectTimer = setTimeout(() => startMpegTs(item, token, fromFallback, allowHlsFallback), 4500);
         return;
       }
       refreshAccount().then((acc) => {
@@ -684,16 +686,16 @@ function startHls(item, token, allowFallback, retryingZap = false) {
     const hls = new Hls({
       lowLatencyMode: false,
       liveSyncDurationCount: 3,
-      liveMaxLatencyDurationCount: 8,
-      backBufferLength: 20,
-      maxBufferLength: 24,
-      maxMaxBufferLength: 45,
+      liveMaxLatencyDurationCount: 10,
+      backBufferLength: 30,
+      maxBufferLength: 50,
+      maxMaxBufferLength: 90,
       maxBufferHole: 0.8,
       highBufferWatchdogPeriod: 3,
       nudgeOffset: 0.2,
       nudgeMaxRetry: 5,
       manifestLoadingTimeOut: 20000,
-      manifestLoadingMaxRetry: allowFallback ? 1 : 2,
+      manifestLoadingMaxRetry: allowFallback ? 1 : 3,
       manifestLoadingRetryDelay: 700,
       levelLoadingTimeOut: 20000,
       levelLoadingMaxRetry: 4,
@@ -748,8 +750,9 @@ function startHls(item, token, allowFallback, retryingZap = false) {
       if (httpCode === 429) {
         destroyEngines();
         if (canAutoWaitZapping()) {
-          showPlayerMessage('Changement de chaîne : fermeture du flux précédent auprès du serveur, démarrage automatique...');
-          state.reconnectTimer = setTimeout(() => startHls(item, token, allowFallback, true), 1800);
+          state.zapRetries++;
+          showPlayerMessage('Changement de chaîne : libération du flux précédent en cours, démarrage automatique...');
+          state.reconnectTimer = setTimeout(() => startHls(item, token, allowFallback, true), 4500);
           return;
         }
         refreshAccount().then((acc) => {
@@ -777,8 +780,9 @@ function startHls(item, token, allowFallback, retryingZap = false) {
     const onNativeError = async () => {
       if (token !== state.playToken) return;
       if (canAutoWaitZapping()) {
-        showPlayerMessage('Changement de chaîne : fermeture du flux précédent auprès du serveur, démarrage automatique...');
-        state.reconnectTimer = setTimeout(() => startHls(item, token, allowFallback, true), 1800);
+        state.zapRetries++;
+        showPlayerMessage('Changement de chaîne : libération du flux précédent en cours, démarrage automatique...');
+        state.reconnectTimer = setTimeout(() => startHls(item, token, allowFallback, true), 4500);
         return;
       }
       const acc = await refreshAccount();
@@ -820,6 +824,7 @@ function play(item, keepFullscreen = false) {
   destroyPlayback();
   const token = state.playToken;
   state.zapStartedAt = Date.now();
+  state.zapRetries = 0;
   state.current = item;
   const label = item.name || 'Chaîne';
   $('player-title').textContent = label;

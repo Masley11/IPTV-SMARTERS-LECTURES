@@ -14,6 +14,8 @@ const PAIR_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const USER_AGENT = 'IPTVSmartersPro/4.0 (Linux; Android 13) VLC/3.0.20';
 
 const pairSessions = globalThis.__ondaPairSessions || (globalThis.__ondaPairSessions = new Map());
+const safeHostCache = globalThis.__ondaSafeHostCache || (globalThis.__ondaSafeHostCache = new Map());
+const SAFE_HOST_TTL_MS = 10 * 60 * 1000;
 
 function lockedOrigin() {
   return (process.env.XTREAM_SERVER || '').trim().replace(/\/+$/, '');
@@ -95,11 +97,16 @@ async function assertSafeExternalURL(url, trustedLockedBase) {
     if (isPrivateOrReservedIP(host)) throw new Error('Adresse IP privée interdite');
     return;
   }
+  const cachedUntil = safeHostCache.get(host);
+  if (cachedUntil && cachedUntil > Date.now()) return;
+
   const records = await dns.lookup(host, { all: true });
   if (!records.length) throw new Error('Hôte introuvable');
   for (const record of records) {
     if (isPrivateOrReservedIP(record.address)) throw new Error('Adresse résolue privée interdite');
   }
+  if (safeHostCache.size > 1000) safeHostCache.clear();
+  safeHostCache.set(host, Date.now() + SAFE_HOST_TTL_MS);
 }
 
 function upstreamURL(path, options = {}) {
@@ -169,7 +176,6 @@ async function singleFetch(url, timeoutMs, externalSignal, headers) {
       headers: {
         'User-Agent': USER_AGENT,
         'Accept': '*/*',
-        'Connection': 'close',
         ...(headers || {})
       },
       redirect: 'manual',
@@ -574,17 +580,10 @@ module.exports = async function handler(req, res) {
   const abortNow = () => {
     if (!requestAbort.signal.aborted) requestAbort.abort();
   };
-  const onPrematureClose = () => {
-    if (!res.writableFinished) abortNow();
-  };
   req.on('aborted', abortNow);
-  req.on('close', onPrematureClose);
-  res.on('close', onPrematureClose);
-  const clientSocket = req.socket;
-  if (clientSocket) {
-    clientSocket.once('close', onPrematureClose);
-    res.once('finish', () => clientSocket.removeListener('close', onPrematureClose));
-  }
+  res.on('close', () => {
+    if (!res.writableFinished) abortNow();
+  });
 
   try {
     const query = new URL(req.url, 'http://localhost').searchParams;
@@ -684,7 +683,7 @@ module.exports = async function handler(req, res) {
     const auth = credentials({ username: query.get('username'), password: query.get('password') });
     const id = query.get('id');
     const isZapping = query.get('zapping') === '1';
-    const lockRetries = isZapping ? [800, 1200] : [900];
+    const lockRetries = isZapping ? [1500, 2200] : [];
 
     if (action === 'account') {
       const info = await fetchAccountInfo(base, isLocked, auth, requestAbort.signal);
