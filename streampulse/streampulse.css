@@ -1,0 +1,1361 @@
+/* ==========================================================================
+   StreamPulse — Unified Adaptive IPTV Interface (#streampulse-module)
+   - Scoped strictly with #streampulse-module and --sp-* CSS custom properties
+   - Automatic responsive layout (Smart TV / Desktop panoramique & Mobile 16:9)
+   - 100% crisp vector SVG iconography, zero stickers/emojis
+   ========================================================================== */
+
+#streampulse-module {
+  --sp-bg: #060913;
+  --sp-surface: #0b101e;
+  --sp-surface-2: #11182b;
+  --sp-surface-hover: rgba(255, 255, 255, 0.055);
+  --sp-border: rgba(148, 163, 184, 0.12);
+  --sp-border-strong: rgba(34, 211, 238, 0.38);
+  --sp-cyan: #22d3ee;
+  --sp-cyan-deep: #0891b2;
+  --sp-indigo: #6366f1;
+  --sp-emerald: #10b981;
+  --sp-amber: #f59e0b;
+  --sp-rose: #f43f5e;
+  --sp-text: #f1f5f9;
+  --sp-text-soft: #cbd5e1;
+  --sp-muted: #7c8ba1;
+  --sp-font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --sp-font-mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+
+  position: fixed;
+  inset: 0;
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  background: var(--sp-bg);
+  color: var(--sp-text);
+  font-family: var(--sp-font-sans);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+#streampulse-module[hidden] {
+  display: none !important;
+}
+
+#streampulse-module *,
+#streampulse-module *::before,
+#streampulse-module *::after {
+  box-sizing: border-box;
+}
+
+#streampulse-module button,
+#streampulse-module input {
+  font-family: inherit;
+}
+
+#streampulse-module svg {
+  display: block;
+  flex-shrink: 0;
+}
+
+/* Automatic D-Pad 10-foot focus ring (activates only when navigating via remote/keyboard) */
+#streampulse-module .sp-focusable:focus {
+  outline: none;
+}
+
+#streampulse-module[data-input="dpad"] .sp-focusable:focus-visible,
+#streampulse-module[data-input="dpad"] .sp-dpad-focused {
+  outline: none;
+  border-color: var(--sp-cyan) !important;
+  box-shadow: 0 0 0 2px var(--sp-cyan), 0 8px 24px rgba(34, 211, 238, 0.25) !important;
+}
+
+/* Scrollbars */
+#streampulse-module .sp-scroll::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+#streampulse-module .sp-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+#streampulse-module .sp-scroll::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.2);
+  border-radius: 999px;
+}
+#streampulse-module .sp-no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+#streampulse-module .sp-no-scrollbar {
+  scrollbar-width: none;
+}
+
+/* ================= TOPBAR ================= */
+#streampulse-module .sp-topbar {
+  height: 56px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 18px;
+  background: rgba(9, 13, 25, 0.92);
+  border-bottom: 1px solid var(--sp-border);
+  backdrop-filter: blur(16px);
+  z-index: 12;
+}
+
+#streampulse-module .sp-brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+}
+
+#streampulse-module .sp-brand-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  overflow: hidden;
+  border: 1px solid rgba(34, 211, 238, 0.28);
+  box-shadow: 0 4px 16px rgba(6, 182, 212, 0.18);
+  flex-shrink: 0;
+  background: #060a14;
+}
+
+#streampulse-module .sp-brand-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+#streampulse-module .sp-brand-text {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  min-width: 0;
+}
+
+#streampulse-module .sp-brand-title {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: #ffffff;
+  white-space: nowrap;
+}
+
+#streampulse-module .sp-brand-accent {
+  background: linear-gradient(90deg, #38bdf8, #818cf8);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+#streampulse-module .sp-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--sp-text-soft);
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid var(--sp-border);
+  white-space: nowrap;
+}
+
+#streampulse-module .sp-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--sp-muted);
+}
+
+#streampulse-module .sp-status-dot.sp-online {
+  background: var(--sp-emerald);
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.65);
+}
+
+#streampulse-module .sp-top-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#streampulse-module .sp-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 13px;
+  border-radius: 9px;
+  border: 1px solid var(--sp-border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--sp-text);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.16s ease, border-color 0.16s ease, transform 0.12s ease;
+  white-space: nowrap;
+}
+
+#streampulse-module .sp-btn:hover {
+  background: rgba(255, 255, 255, 0.085);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+#streampulse-module .sp-btn:active {
+  transform: scale(0.98);
+}
+
+#streampulse-module .sp-btn-primary {
+  background: linear-gradient(135deg, #0891b2, #4f46e5);
+  border-color: rgba(56, 189, 248, 0.4);
+  color: #ffffff;
+  box-shadow: 0 4px 16px rgba(8, 145, 178, 0.26);
+}
+
+#streampulse-module .sp-btn-primary:hover {
+  background: linear-gradient(135deg, #06b6d4, #6366f1);
+  border-color: rgba(103, 232, 249, 0.65);
+}
+
+#streampulse-module .sp-btn-soft {
+  background: rgba(34, 211, 238, 0.09);
+  border-color: rgba(34, 211, 238, 0.26);
+  color: #a5f3fc;
+}
+
+#streampulse-module .sp-btn-soft:hover {
+  background: rgba(34, 211, 238, 0.16);
+  border-color: rgba(34, 211, 238, 0.45);
+}
+
+#streampulse-module .sp-btn-icon {
+  width: 36px;
+  padding: 0;
+  color: var(--sp-text-soft);
+}
+
+/* ================= WORKSPACE LAYOUT ================= */
+#streampulse-module .sp-workspace {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+/* Left Channel Browser (Desktop & Smart TV) */
+#streampulse-module .sp-browser {
+  width: 376px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--sp-surface);
+  border-right: 1px solid var(--sp-border);
+  min-height: 0;
+  transition: margin-left 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+  z-index: 8;
+}
+
+#streampulse-module.sp-theater .sp-browser {
+  margin-left: -376px;
+}
+
+#streampulse-module .sp-browser-top {
+  padding: 12px 12px 10px;
+  border-bottom: 1px solid var(--sp-border);
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+/* Primary Tabs: Toutes / Favoris */
+#streampulse-module .sp-view-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 3px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid var(--sp-border);
+  border-radius: 10px;
+}
+
+#streampulse-module .sp-view-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--sp-muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+#streampulse-module .sp-view-tab.sp-active {
+  background: var(--sp-surface-2);
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+
+/* Search + Bouquet Selector Row */
+#streampulse-module .sp-filter-row {
+  display: flex;
+  gap: 7px;
+}
+
+#streampulse-module .sp-search-box {
+  flex: 1;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+#streampulse-module .sp-search-box > svg {
+  position: absolute;
+  left: 10px;
+  color: var(--sp-muted);
+  pointer-events: none;
+}
+
+#streampulse-module .sp-search-input {
+  width: 100%;
+  height: 36px;
+  padding: 0 30px 0 33px;
+  border-radius: 9px;
+  border: 1px solid var(--sp-border);
+  background: rgba(255, 255, 255, 0.035);
+  color: #ffffff;
+  font-size: 12.5px;
+  outline: none;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+#streampulse-module .sp-search-input::placeholder {
+  color: var(--sp-muted);
+}
+
+#streampulse-module .sp-search-input:focus {
+  border-color: var(--sp-border-strong);
+  background: rgba(255, 255, 255, 0.055);
+}
+
+#streampulse-module .sp-search-clear {
+  position: absolute;
+  right: 6px;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--sp-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+#streampulse-module .sp-search-clear:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* Bouquet Picker Trigger */
+#streampulse-module .sp-bouquet-trigger {
+  width: 100%;
+  height: 34px;
+  padding: 0 11px;
+  border-radius: 9px;
+  border: 1px solid var(--sp-border);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--sp-text-soft);
+  font-size: 12px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+#streampulse-module .sp-bouquet-trigger:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+#streampulse-module .sp-bouquet-trigger-left {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+#streampulse-module .sp-bouquet-trigger-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Quick Horizontal Category Chips */
+#streampulse-module .sp-chips-row {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+#streampulse-module .sp-chip {
+  flex-shrink: 0;
+  height: 27px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--sp-border);
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--sp-muted);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.14s ease;
+}
+
+#streampulse-module .sp-chip:hover {
+  color: var(--sp-text);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+#streampulse-module .sp-chip.sp-active {
+  background: rgba(34, 211, 238, 0.15);
+  border-color: rgba(34, 211, 238, 0.45);
+  color: #a5f3fc;
+  font-weight: 600;
+}
+
+/* Searchable Bouquet Popover Drawer inside Browser */
+#streampulse-module .sp-bouquet-drawer {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--sp-surface);
+}
+
+#streampulse-module .sp-bouquet-drawer-head {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--sp-border);
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+#streampulse-module .sp-bouquet-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+#streampulse-module .sp-bouquet-item {
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--sp-text-soft);
+  font-size: 12.5px;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+}
+
+#streampulse-module .sp-bouquet-item:hover {
+  background: var(--sp-surface-hover);
+  color: #ffffff;
+}
+
+#streampulse-module .sp-bouquet-item.sp-active {
+  background: rgba(34, 211, 238, 0.12);
+  border-color: rgba(34, 211, 238, 0.35);
+  color: #a5f3fc;
+  font-weight: 600;
+}
+
+#streampulse-module .sp-bouquet-count {
+  font-family: var(--sp-font-mono);
+  font-size: 11px;
+  color: var(--sp-muted);
+}
+
+/* Virtualized Channel Viewport */
+#streampulse-module .sp-virtual-viewport {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+#streampulse-module .sp-virtual-spacer {
+  position: relative;
+  width: 100%;
+}
+
+#streampulse-module .sp-ch-row {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  height: 60px;
+  padding: 0 10px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--sp-text);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.14s ease, border-color 0.14s ease;
+}
+
+#streampulse-module .sp-ch-row:hover {
+  background: var(--sp-surface-hover);
+}
+
+#streampulse-module .sp-ch-row.sp-active {
+  background: linear-gradient(90deg, rgba(34, 211, 238, 0.14), rgba(99, 102, 241, 0.08));
+  border-color: rgba(34, 211, 238, 0.36);
+}
+
+#streampulse-module .sp-ch-divider {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  height: 60px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--sp-muted);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+#streampulse-module .sp-ch-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--sp-border);
+}
+
+#streampulse-module .sp-ch-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+#streampulse-module .sp-ch-num {
+  width: 24px;
+  font-family: var(--sp-font-mono);
+  font-size: 11px;
+  color: var(--sp-muted);
+  text-align: right;
+  flex-shrink: 0;
+}
+
+#streampulse-module .sp-ch-logo {
+  width: 38px;
+  height: 38px;
+  border-radius: 9px;
+  background: var(--sp-surface-2);
+  border: 1px solid var(--sp-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #94a3b8;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+#streampulse-module .sp-ch-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #090d19;
+}
+
+#streampulse-module .sp-ch-info {
+  min-width: 0;
+  flex: 1;
+}
+
+#streampulse-module .sp-ch-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #f8fafc;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#streampulse-module .sp-ch-meta {
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--sp-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#streampulse-module .sp-ch-badge {
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 9.5px;
+  font-weight: 700;
+  color: #a5f3fc;
+  background: rgba(34, 211, 238, 0.1);
+  border: 1px solid rgba(34, 211, 238, 0.2);
+  flex-shrink: 0;
+}
+
+#streampulse-module .sp-ch-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+#streampulse-module .sp-fav-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--sp-muted);
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+#streampulse-module .sp-fav-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fbbf24;
+}
+
+#streampulse-module .sp-fav-btn.sp-is-fav {
+  color: #fbbf24;
+}
+
+#streampulse-module .sp-playing-bars {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 13px;
+  color: var(--sp-cyan);
+}
+
+#streampulse-module .sp-playing-bars i {
+  display: block;
+  width: 2.5px;
+  background: currentColor;
+  border-radius: 2px;
+  animation: spEqualizer 0.9s ease-in-out infinite;
+}
+#streampulse-module .sp-playing-bars i:nth-child(1) { height: 6px; animation-delay: 0s; }
+#streampulse-module .sp-playing-bars i:nth-child(2) { height: 12px; animation-delay: 0.2s; }
+#streampulse-module .sp-playing-bars i:nth-child(3) { height: 8px; animation-delay: 0.4s; }
+
+@keyframes spEqualizer {
+  0%, 100% { transform: scaleY(0.45); }
+  50% { transform: scaleY(1); }
+}
+
+/* Empty / Loading State inside Channel Panel */
+#streampulse-module .sp-list-state {
+  padding: 28px 18px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  color: var(--sp-muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+#streampulse-module .sp-browser-foot {
+  height: 36px;
+  padding: 0 12px;
+  border-top: 1px solid var(--sp-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--sp-muted);
+  flex-shrink: 0;
+}
+
+#streampulse-module .sp-link-btn {
+  border: 0;
+  background: none;
+  color: var(--sp-muted);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+#streampulse-module .sp-link-btn:hover {
+  color: #ffffff;
+}
+
+/* ================= CINEMA VIDEO STAGE ================= */
+#streampulse-module .sp-stage {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  background: #000000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+#streampulse-module .sp-video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000000;
+  display: block;
+}
+
+/* Standby / Welcome Backdrop (visible before a channel starts playing) */
+#streampulse-module .sp-standby {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: #050811 url('/assets/standby-backdrop.jpg') center / cover no-repeat;
+}
+
+#streampulse-module .sp-standby::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at center, rgba(6, 9, 19, 0.45) 0%, rgba(6, 9, 19, 0.86) 100%);
+}
+
+#streampulse-module .sp-standby-card {
+  position: relative;
+  z-index: 1;
+  max-width: 460px;
+  width: 100%;
+  padding: 28px 26px;
+  border-radius: 18px;
+  background: rgba(11, 16, 30, 0.78);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  backdrop-filter: blur(20px);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+#streampulse-module .sp-standby-emblem {
+  width: 64px;
+  height: 64px;
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid rgba(34, 211, 238, 0.35);
+  box-shadow: 0 12px 32px rgba(6, 182, 212, 0.25);
+}
+
+#streampulse-module .sp-standby-emblem img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+#streampulse-module .sp-standby-card h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: #ffffff;
+}
+
+#streampulse-module .sp-standby-card p {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--sp-text-soft);
+}
+
+#streampulse-module .sp-standby-actions {
+  margin-top: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+}
+
+/* Loading Spinner Overlay on Video */
+#streampulse-module .sp-buffering {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: rgba(4, 7, 15, 0.42);
+}
+
+#streampulse-module .sp-spinner {
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  border: 3px solid rgba(255, 255, 255, 0.14);
+  border-top-color: var(--sp-cyan);
+  animation: spSpin 0.8s linear infinite;
+}
+
+@keyframes spSpin {
+  to { transform: rotate(360deg); }
+}
+
+#streampulse-module .sp-buffering-label {
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: rgba(9, 13, 25, 0.82);
+  border: 1px solid var(--sp-border);
+  font-size: 12px;
+  color: var(--sp-text-soft);
+}
+
+/* Floating Unmute Prompt when browser blocks unmuted autoplay */
+#streampulse-module .sp-unmute-pill {
+  position: absolute;
+  top: 72px;
+  left: 20px;
+  z-index: 8;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 15px;
+  border-radius: 999px;
+  border: 1px solid rgba(34, 211, 238, 0.5);
+  background: rgba(9, 13, 25, 0.9);
+  color: #ffffff;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+}
+
+/* Stream Error / Recovery Banner */
+#streampulse-module .sp-alert-box {
+  position: absolute;
+  left: 50%;
+  bottom: 84px;
+  transform: translateX(-50%);
+  z-index: 8;
+  max-width: min(520px, calc(100% - 32px));
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: rgba(11, 16, 30, 0.94);
+  border: 1px solid rgba(245, 158, 11, 0.38);
+  backdrop-filter: blur(14px);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--sp-text);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+}
+
+/* Optional Live Telemetry Card (toggled via Infos Flux SVG button) */
+#streampulse-module .sp-stats-card {
+  position: absolute;
+  top: 68px;
+  right: 18px;
+  z-index: 8;
+  width: 228px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(9, 13, 25, 0.9);
+  border: 1px solid var(--sp-border);
+  backdrop-filter: blur(14px);
+  font-size: 11.5px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+#streampulse-module .sp-stats-row {
+  display: flex;
+  justify-content: space-between;
+  color: var(--sp-muted);
+}
+
+#streampulse-module .sp-stats-row strong {
+  font-family: var(--sp-font-mono);
+  color: #e2e8f0;
+  font-weight: 600;
+}
+
+/* Ephemeral Toast */
+#streampulse-module .sp-toast {
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%) translateY(-8px);
+  z-index: 9;
+  padding: 7px 14px;
+  border-radius: 999px;
+  background: rgba(11, 16, 30, 0.92);
+  border: 1px solid rgba(34, 211, 238, 0.35);
+  color: #f8fafc;
+  font-size: 12px;
+  font-weight: 500;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+#streampulse-module .sp-toast.sp-show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* Auto-Hiding Top & Bottom Player Overlays */
+#streampulse-module .sp-osd-top,
+#streampulse-module .sp-osd-bottom {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 7;
+  transition: opacity 0.24s ease, transform 0.24s ease;
+}
+
+#streampulse-module .sp-osd-top {
+  top: 0;
+  padding: 16px 20px 28px;
+  background: linear-gradient(180deg, rgba(4, 7, 15, 0.86) 0%, rgba(4, 7, 15, 0) 100%);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+#streampulse-module .sp-osd-bottom {
+  bottom: 0;
+  padding: 28px 20px 16px;
+  background: linear-gradient(0deg, rgba(4, 7, 15, 0.9) 0%, rgba(4, 7, 15, 0) 100%);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+#streampulse-module.sp-osd-idle .sp-osd-top {
+  opacity: 0;
+  transform: translateY(-8px);
+  pointer-events: none;
+}
+
+#streampulse-module.sp-osd-idle .sp-osd-bottom {
+  opacity: 0;
+  transform: translateY(8px);
+  pointer-events: none;
+}
+
+#streampulse-module.sp-osd-idle .sp-stage {
+  cursor: none;
+}
+
+#streampulse-module .sp-now-playing {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+#streampulse-module .sp-live-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(244, 63, 94, 0.18);
+  border: 1px solid rgba(244, 63, 94, 0.45);
+  color: #fda4af;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  flex-shrink: 0;
+}
+
+#streampulse-module .sp-live-tag i {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #fb7185;
+}
+
+#streampulse-module .sp-now-titles {
+  min-width: 0;
+}
+
+#streampulse-module .sp-now-name {
+  margin: 0;
+  font-size: 15.5px;
+  font-weight: 700;
+  color: #ffffff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#streampulse-module .sp-now-cat {
+  margin: 2px 0 0;
+  font-size: 11.5px;
+  color: var(--sp-text-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#streampulse-module .sp-ctrl-cluster {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#streampulse-module .sp-ctrl-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(15, 23, 42, 0.72);
+  color: #f8fafc;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
+}
+
+#streampulse-module .sp-ctrl-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.28);
+}
+
+#streampulse-module .sp-ctrl-btn.sp-active {
+  border-color: rgba(34, 211, 238, 0.55);
+  color: var(--sp-cyan);
+}
+
+#streampulse-module .sp-ctrl-play {
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  border: 0;
+  background: #ffffff;
+  color: #060913;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+}
+
+#streampulse-module .sp-ctrl-play:hover {
+  transform: scale(1.04);
+}
+
+#streampulse-module .sp-ctrl-pill {
+  height: 36px;
+  padding: 0 11px;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(15, 23, 42, 0.72);
+  color: #e2e8f0;
+  font-size: 11.5px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+}
+
+#streampulse-module .sp-ctrl-pill:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+#streampulse-module .sp-vol-wrap {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+#streampulse-module .sp-vol-slider {
+  width: 78px;
+  accent-color: var(--sp-cyan);
+  cursor: pointer;
+}
+
+/* Segmented Protocol Switcher (Auto / HLS / TS) */
+#streampulse-module .sp-proto-group {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 9px;
+  background: rgba(15, 23, 42, 0.76);
+  border: 1px solid rgba(255, 255, 255, 0.13);
+}
+
+#streampulse-module .sp-proto-btn {
+  height: 30px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--sp-muted);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#streampulse-module .sp-proto-btn.sp-active {
+  background: rgba(34, 211, 238, 0.18);
+  color: #a5f3fc;
+}
+
+/* ================= MOBILE BOTTOM BAR (Auto-shown < 960px) ================= */
+#streampulse-module .sp-mobile-bar {
+  display: none;
+}
+
+/* ================= INTERNAL MODALS (#EXTM3U & D-PAD HELP) ================= */
+#streampulse-module .sp-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 28;
+  background: rgba(3, 6, 14, 0.8);
+  backdrop-filter: blur(12px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+}
+
+#streampulse-module .sp-modal-card {
+  width: 100%;
+  max-width: 460px;
+  padding: 22px;
+  border-radius: 16px;
+  background: var(--sp-surface);
+  border: 1px solid var(--sp-border);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.65);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+#streampulse-module .sp-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+#streampulse-module .sp-modal-head h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+#streampulse-module .sp-kbd-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 12px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--sp-border);
+  font-size: 12.5px;
+  color: var(--sp-text-soft);
+}
+
+#streampulse-module .sp-kbd-row kbd {
+  font-family: var(--sp-font-mono);
+  font-size: 11px;
+  padding: 3px 7px;
+  border-radius: 5px;
+  background: var(--sp-surface-2);
+  border: 1px solid var(--sp-border);
+  color: #a5f3fc;
+}
+
+#streampulse-module .sp-hidden {
+  display: none !important;
+}
+
+/* ================= AUTOMATIC MOBILE / TABLET ADAPTATION (< 960px) ================= */
+@media (max-width: 959px) {
+  #streampulse-module .sp-topbar {
+    height: 50px;
+    padding: 0 12px;
+  }
+
+  #streampulse-module .sp-hide-mobile {
+    display: none !important;
+  }
+
+  /* Video pinned cleanly in 16:9 at the top, Channel Browser comfortably underneath */
+  #streampulse-module .sp-workspace {
+    flex-direction: column-reverse;
+  }
+
+  #streampulse-module .sp-stage {
+    flex: 0 0 auto;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    max-height: 36vh;
+    border-bottom: 1px solid var(--sp-border);
+  }
+
+  /* When no stream has been selected yet on mobile, keep the standby hero compact so channels shine immediately */
+  #streampulse-module:not(.sp-has-stream) .sp-stage {
+    aspect-ratio: auto;
+    min-height: 184px;
+    max-height: 215px;
+  }
+
+  #streampulse-module .sp-standby {
+    padding: 12px;
+  }
+
+  #streampulse-module .sp-standby-card {
+    padding: 14px 16px;
+    gap: 8px;
+  }
+
+  #streampulse-module .sp-standby-emblem {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+  }
+
+  #streampulse-module .sp-standby-card h2 {
+    font-size: 15.5px;
+  }
+
+  #streampulse-module .sp-standby-card p {
+    font-size: 12px;
+  }
+
+  #streampulse-module .sp-browser {
+    width: 100%;
+    flex: 1;
+    margin-left: 0 !important;
+    border-right: 0;
+  }
+
+  #streampulse-module .sp-browser-foot {
+    display: none;
+  }
+
+  #streampulse-module .sp-vol-wrap {
+    display: none;
+  }
+
+  #streampulse-module .sp-osd-top {
+    padding: 10px 12px 18px;
+  }
+
+  #streampulse-module .sp-osd-bottom {
+    padding: 18px 12px 10px;
+  }
+
+  #streampulse-module .sp-now-name {
+    font-size: 13.5px;
+  }
+
+  #streampulse-module .sp-ctrl-btn {
+    width: 34px;
+    height: 34px;
+  }
+
+  #streampulse-module .sp-ctrl-play {
+    width: 38px;
+    height: 38px;
+  }
+
+  #streampulse-module .sp-mobile-bar {
+    height: 58px;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    flex-shrink: 0;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    background: rgba(9, 13, 25, 0.96);
+    border-top: 1px solid var(--sp-border);
+    z-index: 12;
+  }
+
+  #streampulse-module .sp-mobile-tab {
+    border: 0;
+    background: transparent;
+    color: var(--sp-muted);
+    font-size: 10.5px;
+    font-weight: 600;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    cursor: pointer;
+  }
+
+  #streampulse-module .sp-mobile-tab.sp-active {
+    color: var(--sp-cyan);
+  }
+}

@@ -1,0 +1,1366 @@
+<!DOCTYPE html>
+<html lang="fr" class="h-full bg-[#070913] text-slate-100 antialiased select-none">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>StreamPulse IPTV - Smart TV & Android Web</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- Google Fonts: Inter & Space Grotesk -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+            display: ['Space Grotesk', 'sans-serif'],
+          },
+          colors: {
+            sp: {
+              bg: '#070913',
+              card: '#0f1424',
+              surface: '#111728',
+              cyan: '#00f0ff',
+              purple: '#8b5cf6',
+              accent: '#38bdf8'
+            }
+          },
+          boxShadow: {
+            'glow-cyan': '0 0 25px -4px rgba(0, 240, 255, 0.45)',
+            'glow-purple': '0 0 25px -4px rgba(139, 92, 246, 0.45)',
+            'tv-focus': '0 0 0 3px #00f0ff, 0 0 30px rgba(0, 240, 255, 0.65)'
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    /* Scrollbars invisibles ou fines */
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+    .custom-scroll::-webkit-scrollbar { width: 5px; height: 5px; }
+    .custom-scroll::-webkit-scrollbar-track { background: rgba(11, 15, 29, 0.5); }
+    .custom-scroll::-webkit-scrollbar-thumb { background: rgba(0, 240, 255, 0.3); border-radius: 9999px; }
+    .custom-scroll::-webkit-scrollbar-thumb:hover { background: rgba(0, 240, 255, 0.6); }
+
+    /* Smart TV 10-foot UI & D-pad Focus Spatial */
+    .tv-focusable {
+      transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+      outline: none;
+    }
+    .tv-focused {
+      transform: scale(1.04);
+      box-shadow: 0 0 0 3px #00f0ff, 0 0 30px rgba(0, 240, 255, 0.65) !important;
+      border-color: #00f0ff !important;
+      z-index: 25 !important;
+    }
+
+    /* Simulation haptique visuelle tactile */
+    .touch-ripple:active {
+      transform: scale(0.96);
+      opacity: 0.85;
+    }
+  </style>
+</head>
+
+<body class="h-full w-full flex flex-col overflow-hidden font-sans bg-[#070913] text-slate-100">
+
+  <!-- ============================================================
+       TOPBAR UNIFIÉE : LOGO, STATUS, SÉLECTEUR DE MODE (SMART TV / ANDROID)
+  ============================================================ -->
+  <header class="h-14 sm:h-16 bg-[#0a0f1e] border-b border-white/10 px-3 sm:px-6 flex items-center justify-between shrink-0 z-30">
+    <!-- Marque & Status -->
+    <div class="flex items-center gap-3">
+      <div class="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-tr from-cyan-400 via-indigo-600 to-purple-600 p-[1.5px] shadow-glow-cyan">
+        <div class="w-full h-full bg-[#070913] rounded-[10px] flex items-center justify-center">
+          <svg class="w-5 h-5 text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+          </svg>
+        </div>
+      </div>
+      <div>
+        <div class="flex items-center gap-2">
+          <span class="font-display font-bold text-base sm:text-lg text-white tracking-tight">Stream<span class="text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-purple-400">Pulse</span></span>
+          <span class="hidden md:inline-flex px-2 py-0.5 rounded text-[10px] font-mono bg-cyan-400/10 text-cyan-300 border border-cyan-400/30">Stable 4K Engine</span>
+        </div>
+        <p class="hidden sm:block text-[10px] text-slate-400 -mt-0.5">Lecteur IPTV nouvelle génération Multi-écrans & D-Pad</p>
+      </div>
+    </div>
+
+    <!-- Télémétrie en temps réel -->
+    <div class="hidden lg:flex items-center gap-4 text-xs font-mono text-slate-400">
+      <div class="flex items-center gap-2 px-3 py-1 rounded-lg bg-black/40 border border-white/5">
+        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+        <span>Buffer:</span>
+        <span class="text-emerald-400 font-semibold" id="topBufferVal">14.2s (100%)</span>
+      </div>
+      <div class="flex items-center gap-2 px-3 py-1 rounded-lg bg-black/40 border border-white/5">
+        <svg class="w-3.5 h-3.5 text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+        </svg>
+        <span>Débit:</span>
+        <span class="text-cyan-300 font-semibold" id="topBitrateVal">48.2 Mbps</span>
+      </div>
+      <div class="flex items-center gap-2 px-3 py-1 rounded-lg bg-black/40 border border-white/5">
+        <span>FPS:</span>
+        <span class="text-purple-300 font-semibold" id="topFpsVal">60.0</span>
+      </div>
+    </div>
+
+    <!-- Outils & Sélecteur d'appareil (Bascule Démo Smart TV / Android) -->
+    <div class="flex items-center gap-2 sm:gap-3">
+      <!-- Bouton Ajout Playlist (Xtream / M3U) -->
+      <button onclick="openPlaylistModal()" class="tv-focusable px-2.5 sm:px-3 py-1.5 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-400/40 text-cyan-300 text-xs font-medium flex items-center gap-1.5 transition-all touch-ripple" title="Charger Playlist">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+          <polyline points="17 8 12 3 7 8"></polyline>
+          <line x1="12" y1="3" x2="12" y2="15"></line>
+        </svg>
+        <span class="hidden sm:inline">Importer M3U</span>
+      </button>
+
+      <!-- Sélecteur de mode Smart Web vs Android Web -->
+      <div class="flex items-center bg-[#111728] p-1 rounded-xl border border-white/10 text-xs">
+        <button id="btnModeTV" onclick="setDeviceMode('tv')" class="px-2.5 py-1 rounded-lg font-medium transition-all flex items-center gap-1.5 bg-cyan-400 text-slate-950 font-semibold" title="Mode Navigateur Smart TV / 10-foot UI">
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="7" width="20" height="15" rx="2" ry="2"></rect>
+            <polyline points="17 2 12 7 7 2"></polyline>
+          </svg>
+          <span class="hidden sm:inline">Smart TV</span>
+        </button>
+        <button id="btnModeAndroid" onclick="setDeviceMode('android')" class="px-2.5 py-1 rounded-lg font-medium text-slate-400 hover:text-white transition-all flex items-center gap-1.5" title="Mode Navigateur Android Tactile">
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect>
+            <line x1="12" y1="18" x2="12.01" y2="18"></line>
+          </svg>
+          <span class="hidden sm:inline">Android</span>
+        </button>
+      </div>
+
+      <!-- Aide Clavier / D-Pad (Smart TV) -->
+      <button onclick="toggleDpadHelp()" class="tv-focusable w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-300 hover:text-white border border-white/5" title="Raccourcis Télécommande / Clavier">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"></circle>
+          <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+          <line x1="12" y1="17" x2="12.01" y2="17"></line>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- ============================================================
+       CORPS DE L'APPLICATION (SIDEBAR + PLAYER + LISTES)
+  ============================================================ -->
+  <div class="flex-1 flex overflow-hidden relative">
+
+    <!-- 1. BARRE LATÉRALE SMART TV & DESKTOP (Masquée en mode compact Android) -->
+    <aside id="desktopSidebar" class="w-16 sm:w-20 bg-[#090d19] flex flex-col items-center py-4 border-r border-white/5 shrink-0 z-20">
+      <nav class="flex-1 flex flex-col gap-3.5 w-full px-2" id="sidebarNav">
+        <!-- Direct -->
+        <button onclick="switchView('live')" data-view="live" class="nav-btn tv-focusable active-nav w-full h-12 rounded-xl flex items-center justify-center text-cyan-400 bg-cyan-500/10 border border-cyan-400/40 shadow-glow-cyan transition-all" title="En Direct">
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="7" width="20" height="15" rx="2" ry="2"></rect>
+            <polyline points="17 2 12 7 7 2"></polyline>
+          </svg>
+        </button>
+        <!-- VOD / Films -->
+        <button onclick="switchView('movies')" data-view="movies" class="nav-btn tv-focusable w-full h-12 rounded-xl flex items-center justify-center text-slate-400 hover:text-cyan-300 hover:bg-white/5 border border-transparent transition-all" title="Films 4K">
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"></rect>
+            <line x1="7" y1="2" x2="7" y2="22"></line>
+            <line x1="17" y1="2" x2="17" y2="22"></line>
+            <line x1="2" y1="12" x2="22" y2="12"></line>
+            <line x1="2" y1="7" x2="7" y2="7"></line>
+            <line x1="2" y1="17" x2="7" y2="17"></line>
+            <line x1="17" y1="17" x2="22" y2="17"></line>
+            <line x1="17" y1="7" x2="22" y2="7"></line>
+          </svg>
+        </button>
+        <!-- Séries -->
+        <button onclick="switchView('series')" data-view="series" class="nav-btn tv-focusable w-full h-12 rounded-xl flex items-center justify-center text-slate-400 hover:text-cyan-300 hover:bg-white/5 border border-transparent transition-all" title="Séries TV">
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+            <polyline points="2 17 12 22 22 17"></polyline>
+            <polyline points="2 12 12 17 22 12"></polyline>
+          </svg>
+        </button>
+        <!-- Guide EPG -->
+        <button onclick="toggleEPGDrawer()" class="tv-focusable w-full h-12 rounded-xl flex items-center justify-center text-slate-400 hover:text-cyan-300 hover:bg-white/5 border border-transparent transition-all" title="Guide TV (EPG)">
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+            <line x1="16" y1="2" x2="16" y2="6"></line>
+            <line x1="8" y1="2" x2="8" y2="6"></line>
+            <line x1="3" y1="10" x2="21" y2="10"></line>
+          </svg>
+        </button>
+        <!-- Multi-écran 4x -->
+        <button onclick="toggleQuadView()" class="tv-focusable w-full h-12 rounded-xl flex items-center justify-center text-slate-400 hover:text-cyan-300 hover:bg-white/5 border border-transparent transition-all" title="Mosaïque Multi-écrans">
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="7" height="7"></rect>
+            <rect x="14" y="3" width="7" height="7"></rect>
+            <rect x="14" y="14" width="7" height="7"></rect>
+            <rect x="3" y="14" width="7" height="7"></rect>
+          </svg>
+        </button>
+      </nav>
+      <!-- Statut Réseau -->
+      <div class="w-full flex flex-col items-center gap-1.5 pt-3 border-t border-white/5">
+        <svg class="w-4 h-4 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M5 12.55a11 11 0 0 1 14.08 0"></path>
+          <path d="M1.42 9a16 16 0 0 1 21.16 0"></path>
+          <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
+          <line x1="12" y1="20" x2="12.01" y2="20"></line>
+        </svg>
+        <span class="text-[9px] font-mono text-slate-400">Stable</span>
+      </div>
+    </aside>
+
+    <!-- 2. COLONNE DE SÉLECTION DES CHAÎNES & RECHERCHE (Adaptée D-Pad & Touch) -->
+    <section id="channelPanel" class="w-full md:w-80 lg:w-96 bg-[#0a0e1c] border-r border-white/5 flex flex-col shrink-0 transition-all duration-300 z-10">
+      
+      <!-- Recherche & Catégories -->
+      <div class="p-3 sm:p-4 border-b border-white/5 bg-[#0b1022]">
+        <!-- Champ recherche -->
+        <div class="relative">
+          <svg class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <input 
+            id="channelSearch"
+            type="text" 
+            placeholder="Rechercher chaîne, n° ou événement..." 
+            class="tv-focusable w-full bg-[#111728] border border-white/10 rounded-xl pl-9 pr-8 py-2 text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400/50 transition-colors"
+          >
+          <button onclick="document.getElementById('channelSearch').value=''; renderChannels();" class="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-xs">
+            ✕
+          </button>
+        </div>
+
+        <!-- Catégories (Scroll horizontal Android / D-Pad Smart TV) -->
+        <div class="flex items-center gap-1.5 overflow-x-auto no-scrollbar mt-3" id="categoryBar">
+          <button data-cat="all" class="cat-chip tv-focusable active-chip px-3 py-1 rounded-lg text-xs font-semibold whitespace-nowrap bg-cyan-400 text-slate-950 transition-all">
+            Tous (8)
+          </button>
+          <button data-cat="sport" class="cat-chip tv-focusable px-3 py-1 rounded-lg text-xs font-medium whitespace-nowrap bg-slate-900 text-slate-400 hover:text-white border border-white/5 transition-all">
+            Sports 4K
+          </button>
+          <button data-cat="cinema" class="cat-chip tv-focusable px-3 py-1 rounded-lg text-xs font-medium whitespace-nowrap bg-slate-900 text-slate-400 hover:text-white border border-white/5 transition-all">
+            Cinéma HDR
+          </button>
+          <button data-cat="doc" class="cat-chip tv-focusable px-3 py-1 rounded-lg text-xs font-medium whitespace-nowrap bg-slate-900 text-slate-400 hover:text-white border border-white/5 transition-all">
+            Nature 8K
+          </button>
+          <button data-cat="news" class="cat-chip tv-focusable px-3 py-1 rounded-lg text-xs font-medium whitespace-nowrap bg-slate-900 text-slate-400 hover:text-white border border-white/5 transition-all">
+            Actualités
+          </button>
+        </div>
+      </div>
+
+      <!-- Liste scrollable des chaînes -->
+      <div id="channelsContainer" class="flex-1 overflow-y-auto custom-scroll divide-y divide-white/[0.04]">
+        <!-- Injecté dynamiquement par JS -->
+      </div>
+
+      <!-- Footer de volet chaînes : Info source & Quick zap -->
+      <div class="p-2.5 bg-[#070b16] border-t border-white/5 flex items-center justify-between text-[11px] text-slate-400">
+        <div class="flex items-center gap-1.5">
+          <svg class="w-3.5 h-3.5 text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+            <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
+            <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
+          </svg>
+          <span class="truncate max-w-[150px]">Xtream Server Pro (SSL)</span>
+        </div>
+        <span class="text-emerald-400 font-mono text-[10px]">Latence: 12ms</span>
+      </div>
+    </section>
+
+    <!-- 3. ZONE PRINCIPALE : LECTEUR VIDÉO 4K (CANVAS 60FPS) & CONTRÔLES OSD -->
+    <main class="flex-1 flex flex-col bg-black relative overflow-hidden">
+      
+      <!-- Canvas Vidéo & Simulation d'écran interactif -->
+      <div id="playerWrapper" class="relative flex-1 bg-black flex items-center justify-center overflow-hidden cursor-pointer" onclick="toggleOsdVisibility(event)">
+        <canvas id="streamCanvas" class="w-full h-full block"></canvas>
+
+        <!-- Vue Quad-View (Multi-écrans 4 flux simultanés) -->
+        <div id="quadViewGrid" class="hidden absolute inset-0 grid grid-cols-2 grid-rows-2 border-2 border-cyan-400/50 pointer-events-auto">
+          <!-- Écran 1 (Focusé) -->
+          <div onclick="selectQuadStream(0)" class="quad-slot relative border-r-2 border-b-2 border-cyan-400/40 p-2 sm:p-3 flex flex-col justify-between bg-black/20 hover:bg-cyan-500/10 cursor-pointer">
+            <div class="flex items-center justify-between">
+              <span class="px-2 py-0.5 rounded text-[10px] font-mono bg-cyan-400 text-slate-950 font-bold">1 • AUDIO DIRECT</span>
+              <span class="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-mono">4K 60FPS</span>
+            </div>
+            <span class="text-xs font-semibold text-white bg-black/70 px-2 py-1 rounded w-fit">StreamPulse Sport 1 UHD</span>
+          </div>
+
+          <!-- Écran 2 -->
+          <div onclick="selectQuadStream(1)" class="quad-slot relative border-b-2 border-cyan-400/40 p-2 sm:p-3 flex flex-col justify-between bg-black/20 hover:bg-cyan-500/10 cursor-pointer">
+            <div class="flex items-center justify-between">
+              <span class="px-2 py-0.5 rounded text-[10px] font-mono bg-black/80 text-slate-400 border border-white/10">2 • MUTED</span>
+              <span class="px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 text-[10px] font-mono">HDR10+</span>
+            </div>
+            <span class="text-xs font-semibold text-white bg-black/70 px-2 py-1 rounded w-fit">CinéPulse Premier 4K</span>
+          </div>
+
+          <!-- Écran 3 -->
+          <div onclick="selectQuadStream(2)" class="quad-slot relative border-r-2 border-cyan-400/40 p-2 sm:p-3 flex flex-col justify-between bg-black/20 hover:bg-cyan-500/10 cursor-pointer">
+            <div class="flex items-center justify-between">
+              <span class="px-2 py-0.5 rounded text-[10px] font-mono bg-black/80 text-slate-400 border border-white/10">3 • MUTED</span>
+              <span class="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 text-[10px] font-mono">8K RAW</span>
+            </div>
+            <span class="text-xs font-semibold text-white bg-black/70 px-2 py-1 rounded w-fit">Nova Horizon Nature 8K</span>
+          </div>
+
+          <!-- Écran 4 -->
+          <div onclick="selectQuadStream(3)" class="quad-slot relative p-2 sm:p-3 flex flex-col justify-between bg-black/20 hover:bg-cyan-500/10 cursor-pointer">
+            <div class="flex items-center justify-between">
+              <span class="px-2 py-0.5 rounded text-[10px] font-mono bg-black/80 text-slate-400 border border-white/10">4 • MUTED</span>
+              <span class="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px] font-mono">120 FPS</span>
+            </div>
+            <span class="text-xs font-semibold text-white bg-black/70 px-2 py-1 rounded w-fit">Pulse MotorSport F1</span>
+          </div>
+        </div>
+
+        <!-- OSD Haut : Nom de la chaîne, émission & zapping instantané -->
+        <div id="osdTop" class="absolute top-0 left-0 right-0 p-3 sm:p-5 bg-gradient-to-b from-black/90 via-black/40 to-transparent flex items-start justify-between pointer-events-none transition-all duration-300">
+          <div class="flex items-start gap-3">
+            <div id="osdChannelIcon" class="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-cyan-500/15 border border-cyan-400/30 flex items-center justify-center text-cyan-300 shrink-0 shadow-lg">
+              <!-- SVG injecté dynamiquement -->
+            </div>
+            <div>
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="px-2 py-0.5 rounded bg-rose-600 text-white text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5">
+                  <span class="w-1.5 h-1.5 rounded-full bg-white animate-ping"></span> DIRECT
+                </span>
+                <h2 id="osdChannelTitle" class="font-display font-bold text-base sm:text-xl text-white">StreamPulse Sport 1 UHD</h2>
+                <span id="osdQualityBadge" class="px-2 py-0.5 rounded text-[10px] font-mono bg-cyan-500/20 text-cyan-300 border border-cyan-400/30">4K HDR • 60 FPS</span>
+              </div>
+              <p id="osdProgramTitle" class="text-xs sm:text-sm text-slate-300 mt-1 max-w-xl truncate">Ligue des Champions : Finale Mondiale (Audio Dolby Atmos 7.1)</p>
+            </div>
+          </div>
+
+          <!-- Badge Zapping & Codec Télémétrique -->
+          <div class="hidden sm:flex flex-col items-end gap-1 font-mono text-xs">
+            <div class="px-2.5 py-1 rounded-lg bg-black/70 border border-white/10 text-slate-300">
+              <span class="text-slate-500">Codec:</span> <span id="osdCodec" class="text-cyan-300 font-semibold">HEVC Main10</span>
+            </div>
+            <div class="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-[10px]">
+              Zapping: <strong id="osdZapTime">0.14s</strong>
+            </div>
+          </div>
+        </div>
+
+        <!-- Toast Éphémère (Actions, Changements de chaîne) -->
+        <div id="toastMessage" class="absolute inset-0 pointer-events-none flex items-center justify-center opacity-0 transition-opacity duration-300">
+          <div class="px-5 py-3 rounded-2xl bg-black/90 border border-cyan-400/40 text-cyan-300 font-mono text-sm flex items-center gap-2.5 shadow-glow-cyan">
+            <svg class="w-4 h-4 text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="5 3 19 12 5 21 5 3"></polygon>
+            </svg>
+            <span id="toastText">Action effectuée</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================================
+           4. BARRE DE CONTRÔLES MÉDIA, TIMESHIFT & COMMANDES DU DIRECT
+      ============================================================ -->
+      <div id="osdBottom" class="bg-[#090d18] border-t border-white/10 p-3 sm:p-4 flex flex-col gap-2.5 shrink-0 z-10 transition-all duration-300">
+        
+        <!-- Timeline du Direct / Timeshift (2 Heures de mémoire tampon) -->
+        <div class="flex flex-col gap-1">
+          <div class="flex items-center justify-between text-[11px] font-mono text-slate-400">
+            <span id="timeshiftStart">20:45</span>
+            <span class="text-cyan-400 flex items-center gap-1.5 font-sans font-medium text-[11px]">
+              <svg class="w-3.5 h-3.5 text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"></circle>
+                <polyline points="12 6 12 12 16 14"></polyline>
+              </svg>
+              Contrôle du Direct (Timeshift illimité)
+            </span>
+            <span id="timeshiftEnd">23:00</span>
+          </div>
+
+          <div class="relative w-full h-2 bg-slate-800 rounded-full cursor-pointer group" onclick="seekTimeshift(event)">
+            <div id="timeshiftBar" class="h-full bg-gradient-to-r from-cyan-400 via-indigo-500 to-purple-500 rounded-full relative" style="width: 72%;">
+              <div class="absolute right-0 top-1/2 -translate-y-1/2 w-3.5 h-3.5 bg-white rounded-full shadow-md group-hover:scale-125 transition-transform"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Boutons de Contrôle OSD -->
+        <div class="flex flex-wrap items-center justify-between gap-2 pt-1">
+          
+          <!-- Commandes Vidéo Principales -->
+          <div class="flex items-center gap-1.5 sm:gap-2.5">
+            <!-- Chaîne Précédente -->
+            <button onclick="prevChannel()" class="tv-focusable w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white flex items-center justify-center border border-white/5 touch-ripple" title="Chaîne Précédente (Touche Gauche)">
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="19 20 9 12 19 4 19 20"></polygon>
+                <line x1="5" y1="19" x2="5" y2="5"></line>
+              </svg>
+            </button>
+
+            <!-- -10 secondes -->
+            <button onclick="skipSeconds(-10)" class="tv-focusable w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white flex items-center justify-center border border-white/5 touch-ripple" title="Reculer de 10s">
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M1 4v6h6"></path>
+                <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+              </svg>
+            </button>
+
+            <!-- Play / Pause Principal -->
+            <button id="btnMainPlay" onclick="togglePlayPause()" class="tv-focusable w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-cyan-400 text-slate-950 hover:bg-cyan-300 flex items-center justify-center shadow-glow-cyan transition-all touch-ripple" title="Lecture / Pause (Touche P ou Entrée)">
+              <svg id="svgPlayPause" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="6" y="4" width="4" height="16"></rect>
+                <rect x="14" y="4" width="4" height="16"></rect>
+              </svg>
+            </button>
+
+            <!-- +10 secondes -->
+            <button onclick="skipSeconds(10)" class="tv-focusable w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white flex items-center justify-center border border-white/5 touch-ripple" title="Avancer de 10s">
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M23 4v6h-6"></path>
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+              </svg>
+            </button>
+
+            <!-- Chaîne Suivante -->
+            <button onclick="nextChannel()" class="tv-focusable w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white flex items-center justify-center border border-white/5 touch-ripple" title="Chaîne Suivante (Touche Droite)">
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="5 4 15 12 5 20 5 4"></polygon>
+                <line x1="19" y1="5" x2="19" y2="19"></line>
+              </svg>
+            </button>
+
+            <!-- Volume Slider (Masqué sur très petits écrans, accessible bouton) -->
+            <div class="hidden sm:flex items-center gap-2 pl-2 border-l border-white/10">
+              <button onclick="toggleMute()" class="tv-focusable text-slate-400 hover:text-white">
+                <svg id="svgVolume" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                  <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                </svg>
+              </button>
+              <input id="volRange" type="range" min="0" max="100" value="80" class="w-16 sm:w-20 h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-cyan-400" oninput="setVolume(this.value)">
+            </div>
+          </div>
+
+          <!-- Outils Écran (Multi-écrans 4x, Piste Audio, Guide EPG, Fullscreen) -->
+          <div class="flex items-center gap-1.5 sm:gap-2">
+            
+            <!-- Piste Audio / Sous-titres -->
+            <button onclick="changeAudioTrack()" class="tv-focusable px-2.5 sm:px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-xs font-mono text-slate-300 hover:text-white flex items-center gap-1.5 border border-white/5 touch-ripple" title="Pistes Audio / Sous-titres">
+              <svg class="w-3.5 h-3.5 text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+              </svg>
+              <span id="labelAudioTrack">FR (Dolby 5.1)</span>
+            </button>
+
+            <!-- Multi-Écran (4 flux) -->
+            <button id="btnMultiScreen" onclick="toggleQuadView()" class="tv-focusable px-2.5 sm:px-3 py-1.5 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-400/40 text-cyan-300 text-xs font-semibold flex items-center gap-1.5 touch-ripple" title="Mosaïque Multi-écrans 4X (Touche M)">
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="3" width="7" height="7"></rect>
+                <rect x="14" y="3" width="7" height="7"></rect>
+                <rect x="14" y="14" width="7" height="7"></rect>
+                <rect x="3" y="14" width="7" height="7"></rect>
+              </svg>
+              <span class="hidden sm:inline">Multi-Écran 4x</span>
+            </button>
+
+            <!-- Guide EPG (Ouvrir/Fermer) -->
+            <button onclick="toggleEPGDrawer()" class="tv-focusable w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white flex items-center justify-center border border-white/5 touch-ripple" title="Guide TV (EPG)">
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                <line x1="16" y1="2" x2="16" y2="6"></line>
+                <line x1="8" y1="2" x2="8" y2="6"></line>
+                <line x1="3" y1="10" x2="21" y2="10"></line>
+              </svg>
+            </button>
+
+            <!-- Plein écran -->
+            <button onclick="toggleFullScreen()" class="tv-focusable w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white flex items-center justify-center border border-white/5 touch-ripple" title="Plein Écran (Touche F)">
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="15 3 21 3 21 9"></polyline>
+                <polyline points="9 21 3 21 3 15"></polyline>
+                <line x1="21" y1="3" x2="14" y2="10"></line>
+                <line x1="3" y1="21" x2="10" y2="14"></line>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Volet Rétractable EPG Timeline Chronologique -->
+        <div id="epgTimelineDrawer" class="hidden mt-2 pt-2.5 border-t border-white/10">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-bold text-slate-300 flex items-center gap-1.5 uppercase tracking-wider font-mono">
+              <span class="w-1.5 h-1.5 rounded-full bg-cyan-400"></span> EPG XMLTV Synchronisé
+            </span>
+            <span class="text-[10px] font-mono text-emerald-400">Précision à la seconde</span>
+          </div>
+          <div id="epgCardsGrid" class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <!-- Injecté par JS -->
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- ============================================================
+       BOTTOM NAVIGATION BAR : ERGONOMIE ANDROID MOBILE & TABLETTE
+       (Affichée uniquement en mode Android ou sur petit écran)
+  ============================================================ -->
+  <nav id="androidBottomNav" class="hidden h-14 bg-[#0a0f1e] border-t border-white/10 flex items-center justify-around px-2 shrink-0 z-30">
+    <button onclick="switchView('live')" class="flex flex-col items-center gap-1 text-cyan-400 py-1 px-3 touch-ripple">
+      <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2" y="7" width="20" height="15" rx="2" ry="2"></rect>
+        <polyline points="17 2 12 7 7 2"></polyline>
+      </svg>
+      <span class="text-[10px] font-semibold">Direct</span>
+    </button>
+    <button onclick="switchView('movies')" class="flex flex-col items-center gap-1 text-slate-400 hover:text-white py-1 px-3 touch-ripple">
+      <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"></rect>
+        <line x1="7" y1="2" x2="7" y2="22"></line>
+        <line x1="17" y1="2" x2="17" y2="22"></line>
+        <line x1="2" y1="12" x2="22" y2="12"></line>
+      </svg>
+      <span class="text-[10px]">Films</span>
+    </button>
+    <button onclick="switchView('series')" class="flex flex-col items-center gap-1 text-slate-400 hover:text-white py-1 px-3 touch-ripple">
+      <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+        <polyline points="2 17 12 22 22 17"></polyline>
+      </svg>
+      <span class="text-[10px]">Séries</span>
+    </button>
+    <button onclick="toggleEPGDrawer()" class="flex flex-col items-center gap-1 text-slate-400 hover:text-white py-1 px-3 touch-ripple">
+      <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+        <line x1="3" y1="10" x2="21" y2="10"></line>
+      </svg>
+      <span class="text-[10px]">Guide TV</span>
+    </button>
+    <button onclick="openPlaylistModal()" class="flex flex-col items-center gap-1 text-slate-400 hover:text-white py-1 px-3 touch-ripple">
+      <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"></circle>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+      </svg>
+      <span class="text-[10px]">Sources</span>
+    </button>
+  </nav>
+
+  <!-- ============================================================
+       MODAL 1 : IMPORT DE PLAYLIST (M3U / XTREAM CODES API)
+  ============================================================ -->
+  <div id="playlistModal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="w-full max-w-lg bg-[#0e1424] border border-cyan-400/30 rounded-2xl p-6 shadow-glow-cyan text-left relative">
+      <div class="flex items-center justify-between pb-4 border-b border-white/10 mb-4">
+        <div class="flex items-center gap-2.5">
+          <svg class="w-5 h-5 text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="17 8 12 3 7 8"></polyline>
+            <line x1="12" y1="3" x2="12" y2="15"></line>
+          </svg>
+          <h3 class="text-base font-bold text-white font-display">Ajouter une Source IPTV</h3>
+        </div>
+        <button onclick="closePlaylistModal()" class="text-slate-400 hover:text-white text-lg">✕</button>
+      </div>
+
+      <!-- Onglets M3U vs Xtream Codes -->
+      <div class="grid grid-cols-2 gap-2 p-1 bg-slate-900 rounded-xl mb-4 border border-white/5">
+        <button id="tabM3U" onclick="switchPlaylistType('m3u')" class="py-1.5 text-xs font-semibold rounded-lg bg-cyan-400 text-slate-950 transition-all">Lien M3U / M3U8</button>
+        <button id="tabXtream" onclick="switchPlaylistType('xtream')" class="py-1.5 text-xs font-semibold rounded-lg text-slate-400 hover:text-white transition-all">Xtream Codes API</button>
+      </div>
+
+      <!-- Formulaire M3U -->
+      <div id="formM3U" class="space-y-3">
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Nom de la Playlist</label>
+          <input type="text" id="m3uName" value="Mon Fournisseur IPTV 4K" class="w-full bg-[#111728] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400">
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">URL de la Playlist (.m3u ou .m3u8)</label>
+          <input type="text" id="m3uUrl" placeholder="https://fournisseur-iptv.com/get.php?username=...&type=m3u_plus" class="w-full bg-[#111728] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400 font-mono">
+        </div>
+      </div>
+
+      <!-- Formulaire Xtream -->
+      <div id="formXtream" class="hidden space-y-3">
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">URL du Serveur (DNS / Host:Port)</label>
+          <input type="text" placeholder="http://iptv-server.pro:8080" class="w-full bg-[#111728] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400 font-mono">
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="block text-xs font-medium text-slate-400 mb-1">Identifiant</label>
+            <input type="text" placeholder="user1234" class="w-full bg-[#111728] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400">
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-slate-400 mb-1">Mot de passe</label>
+            <input type="password" placeholder="••••••••" class="w-full bg-[#111728] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400">
+          </div>
+        </div>
+      </div>
+
+      <div class="mt-5 flex items-center justify-end gap-2.5 pt-3 border-t border-white/10">
+        <button onclick="closePlaylistModal()" class="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-xs text-slate-300">Annuler</button>
+        <button onclick="savePlaylistMock()" class="px-5 py-2 rounded-xl bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-semibold text-xs shadow-glow-cyan">Connecter & Charger</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       MODAL 2 : RACCOURCIS TÉLÉCOMMANDE & CLAVIER (SMART TV)
+  ============================================================ -->
+  <div id="dpadModal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="w-full max-w-md bg-[#0e1424] border border-cyan-400/30 rounded-2xl p-6 shadow-glow-cyan text-left">
+      <div class="flex items-center justify-between pb-3 border-b border-white/10 mb-4">
+        <h3 class="text-base font-bold text-white font-display flex items-center gap-2">
+          <svg class="w-5 h-5 text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="7" width="20" height="15" rx="2" ry="2"></rect>
+            <polyline points="17 2 12 7 7 2"></polyline>
+          </svg>
+          Contrôle Télécommande Smart TV
+        </h3>
+        <button onclick="toggleDpadHelp()" class="text-slate-400 hover:text-white">✕</button>
+      </div>
+      <div class="space-y-2.5 text-xs text-slate-300 font-mono">
+        <div class="flex justify-between py-1 border-b border-white/5">
+          <span class="text-slate-400">Navigation D-Pad :</span>
+          <span class="text-cyan-300">Flèches (Haut, Bas, Gauche, Droite)</span>
+        </div>
+        <div class="flex justify-between py-1 border-b border-white/5">
+          <span class="text-slate-400">Validation / Zapping :</span>
+          <span class="text-cyan-300">Touche Entrée / Bouton OK</span>
+        </div>
+        <div class="flex justify-between py-1 border-b border-white/5">
+          <span class="text-slate-400">Play / Pause :</span>
+          <span class="text-cyan-300">Touche 'P' ou Espace</span>
+        </div>
+        <div class="flex justify-between py-1 border-b border-white/5">
+          <span class="text-slate-400">Mosaïque 4 Écrans :</span>
+          <span class="text-cyan-300">Touche 'M'</span>
+        </div>
+        <div class="flex justify-between py-1 border-b border-white/5">
+          <span class="text-slate-400">Plein Écran :</span>
+          <span class="text-cyan-300">Touche 'F'</span>
+        </div>
+        <div class="flex justify-between py-1">
+          <span class="text-slate-400">Retour / Quitter :</span>
+          <span class="text-cyan-300">Touche Échap / Backspace</span>
+        </div>
+      </div>
+      <div class="mt-4 pt-3 border-t border-white/10 text-center">
+        <button onclick="toggleDpadHelp()" class="w-full py-2 rounded-xl bg-cyan-400 text-slate-950 font-semibold text-xs">Compris</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       6. CODE JAVASCRIPT : GESTION DES FLUX, D-PAD, TOUCH & CANVAS
+  ============================================================ -->
+  <script>
+    // Liste des flux IPTV intégrés avec SVG vectoriels natifs
+    const channels = [
+      {
+        id: 1,
+        number: "01",
+        name: "StreamPulse Sport 1 UHD",
+        category: "sport",
+        quality: "4K HDR • 60 FPS",
+        bitrate: "48.2 Mbps",
+        codec: "HEVC Main10",
+        program: "Ligue des Champions : Finale Mondiale (Audio Dolby Atmos 7.1)",
+        start: "20:45",
+        end: "23:00",
+        progress: 72,
+        theme: "#00f0ff",
+        secondary: "#10b981",
+        icon: `<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"></path><path d="M2 12h20"></path></svg>`,
+        epg: [
+          { time: "19:30 - 20:45", title: "Avant-Match : Compos & Télémétrie", status: "Replay" },
+          { time: "20:45 - 23:00", title: "Ligue des Champions : Finale 4K", status: "En direct" },
+          { time: "23:00 - 00:15", title: "Cérémonie & Analyses Tactiques", status: "À suivre" }
+        ]
+      },
+      {
+        id: 2,
+        number: "02",
+        name: "CinéPulse Premier 4K",
+        category: "cinema",
+        quality: "4K Dolby Vision",
+        bitrate: "39.5 Mbps",
+        codec: "AV1 Hardware",
+        program: "Interstellar Horizon (2026 Édition IMAX • DTS-HD)",
+        start: "21:00",
+        end: "23:45",
+        progress: 45,
+        theme: "#8b5cf6",
+        secondary: "#ec4899",
+        icon: `<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"></polygon><rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect></svg>`,
+        epg: [
+          { time: "19:15 - 21:00", title: "Aux Portes de la Nébuleuse", status: "Replay" },
+          { time: "21:00 - 23:45", title: "Interstellar Horizon (IMAX)", status: "En direct" },
+          { time: "23:45 - 01:15", title: "CyberProtocol Zero : Action", status: "À suivre" }
+        ]
+      },
+      {
+        id: 3,
+        number: "03",
+        name: "Nova Horizon Nature 8K",
+        category: "doc",
+        quality: "8K RAW • 60 FPS",
+        bitrate: "68.4 Mbps",
+        codec: "HEVC 8K NVDEC",
+        program: "Abysses Pacifiques : Mystères des Créatures Bioluminescentes",
+        start: "20:30",
+        end: "22:15",
+        progress: 80,
+        theme: "#38bdf8",
+        secondary: "#06b6d4",
+        icon: `<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"></polygon></svg>`,
+        epg: [
+          { time: "19:00 - 20:30", title: "Volcans Sous-Marins d'Islande", status: "Replay" },
+          { time: "20:30 - 22:15", title: "Abysses Pacifiques 8K", status: "En direct" },
+          { time: "22:15 - 23:30", title: "Aurores Boréales de Norvège", status: "À suivre" }
+        ]
+      },
+      {
+        id: 4,
+        number: "04",
+        name: "Pulse MotorSport F1",
+        category: "sport",
+        quality: "4K • 120 FPS",
+        bitrate: "54.0 Mbps",
+        codec: "HEVC Ultra-Low-Latency",
+        program: "Grand Prix de Singapour : Essais & Caméra Casque Onboard",
+        start: "20:00",
+        end: "22:00",
+        progress: 60,
+        theme: "#f43f5e",
+        secondary: "#f59e0b",
+        icon: `<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"></path><line x1="4" y1="22" x2="4" y2="15"></line></svg>`,
+        epg: [
+          { time: "18:45 - 20:00", title: "Télémétrie & Données Pneus", status: "Replay" },
+          { time: "20:00 - 22:00", title: "Essais Qualificatifs 120Hz", status: "En direct" },
+          { time: "22:00 - 23:00", title: "Débriefing des Écuries", status: "À suivre" }
+        ]
+      },
+      {
+        id: 5,
+        number: "05",
+        name: "Pulse News 24/7",
+        category: "news",
+        quality: "1080p • 60 FPS",
+        bitrate: "18.2 Mbps",
+        codec: "H.264 Main",
+        program: "Édition Monde : Énergie de Fusion & Réseaux Quantiques",
+        start: "21:00",
+        end: "22:00",
+        progress: 35,
+        theme: "#60a5fa",
+        secondary: "#2563eb",
+        icon: `<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2"></circle><path d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14"></path></svg>`,
+        epg: [
+          { time: "20:00 - 21:00", title: "Le Grand Journal International", status: "Replay" },
+          { time: "21:00 - 22:00", title: "Édition Monde : Fusion & IA", status: "En direct" },
+          { time: "22:00 - 23:00", title: "Débat Économique Européen", status: "À suivre" }
+        ]
+      },
+      {
+        id: 6,
+        number: "06",
+        name: "CinéPulse Action HDR",
+        category: "cinema",
+        quality: "4K HDR10+",
+        bitrate: "36.8 Mbps",
+        codec: "HEVC Hardware",
+        program: "CyberProtocol Zero (Thriller Cyberpunk 4K • Dolby Atmos)",
+        start: "20:50",
+        end: "22:50",
+        progress: 50,
+        theme: "#c084fc",
+        secondary: "#818cf8",
+        icon: `<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 8 4 4-4 4"></path><path d="M2 12h20"></path></svg>`,
+        epg: [
+          { time: "19:00 - 20:50", title: "Shadow Operative (Espionnage)", status: "Replay" },
+          { time: "20:50 - 22:50", title: "CyberProtocol Zero 4K", status: "En direct" },
+          { time: "22:50 - 00:30", title: "Traque dans Neo-Tokyo", status: "À suivre" }
+        ]
+      },
+      {
+        id: 7,
+        number: "07",
+        name: "AstroPulse Exploration",
+        category: "doc",
+        quality: "4K HDR • 60 FPS",
+        bitrate: "37.5 Mbps",
+        codec: "AV1 Hardware",
+        program: "Nébuleuse d'Orion : Dernières Captures Téléscopiques",
+        start: "20:40",
+        end: "22:30",
+        progress: 65,
+        theme: "#22d3ee",
+        secondary: "#6366f1",
+        icon: `<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"></path><path d="M2 12h20"></path></svg>`,
+        epg: [
+          { time: "19:15 - 20:40", title: "Exoplanètes Habitables", status: "Replay" },
+          { time: "20:40 - 22:30", title: "Nébuleuse d'Orion", status: "En direct" },
+          { time: "22:30 - 23:45", title: "Voyage au Cœur d'un Trou Noir", status: "À suivre" }
+        ]
+      },
+      {
+        id: 8,
+        number: "08",
+        name: "Pulse E-Sport Arena",
+        category: "sport",
+        quality: "4K • 120 FPS",
+        bitrate: "49.0 Mbps",
+        codec: "HEVC Ultra-Low-Latency",
+        program: "Tournoi des Champions : Grande Finale Séoul vs Tokyo",
+        start: "20:15",
+        end: "23:30",
+        progress: 58,
+        theme: "#ec4899",
+        secondary: "#8b5cf6",
+        icon: `<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"></rect><path d="M6 12h4m-2-2v4m7-2h.01m2.99 0h.01"></path></svg>`,
+        epg: [
+          { time: "18:30 - 20:15", title: "Demi-Finale Losers Bracket", status: "Replay" },
+          { time: "20:15 - 23:30", title: "Grande Finale Mondiale 120Hz", status: "En direct" },
+          { time: "23:30 - 00:30", title: "Remise du Trophée & MVP", status: "À suivre" }
+        ]
+      }
+    ];
+
+    // État global
+    let currentChannelIdx = 0;
+    let selectedCat = "all";
+    let isPlaying = true;
+    let isMuted = false;
+    let isQuadView = false;
+    let isOsdVisible = true;
+    let osdHideTimeout = null;
+    let audioTrackIndex = 0;
+    const audioTracks = ["FR (Dolby 5.1)", "VO (Dolby Atmos)", "FR (Audiodescription)"];
+
+    // Navigation spatiale Smart TV (D-pad focus index)
+    let currentFocusIndex = 0;
+    let tvFocusableElements = [];
+
+    // Mode appareil : 'tv' ou 'android'
+    let currentDeviceMode = "tv";
+
+    // 1. Bascule du mode d'affichage (Smart TV / Android)
+    function setDeviceMode(mode) {
+      currentDeviceMode = mode;
+      const btnTV = document.getElementById("btnModeTV");
+      const btnAndroid = document.getElementById("btnModeAndroid");
+      const desktopSidebar = document.getElementById("desktopSidebar");
+      const androidNav = document.getElementById("androidBottomNav");
+      const channelPanel = document.getElementById("channelPanel");
+
+      if (mode === "tv") {
+        btnTV.className = "px-2.5 py-1 rounded-lg font-medium transition-all flex items-center gap-1.5 bg-cyan-400 text-slate-950 font-semibold";
+        btnAndroid.className = "px-2.5 py-1 rounded-lg font-medium text-slate-400 hover:text-white transition-all flex items-center gap-1.5";
+        desktopSidebar.classList.remove("hidden");
+        androidNav.classList.add("hidden");
+        channelPanel.classList.remove("hidden");
+        showToast("Mode Smart TV activé : Contrôle D-Pad actif");
+        refreshTvFocusElements();
+      } else {
+        btnAndroid.className = "px-2.5 py-1 rounded-lg font-medium transition-all flex items-center gap-1.5 bg-cyan-400 text-slate-950 font-semibold";
+        btnTV.className = "px-2.5 py-1 rounded-lg font-medium text-slate-400 hover:text-white transition-all flex items-center gap-1.5";
+        desktopSidebar.classList.add("hidden");
+        androidNav.classList.remove("hidden");
+        showToast("Mode Android Web activé : Barre tactile & gestures");
+      }
+    }
+
+    // 2. Rendu des chaînes dans le panneau gauche
+    function renderChannels() {
+      const container = document.getElementById("channelsContainer");
+      const filterText = document.getElementById("channelSearch").value.toLowerCase().trim();
+      container.innerHTML = "";
+
+      const filtered = channels.filter(ch => {
+        const catMatch = selectedCat === "all" || ch.category === selectedCat;
+        const textMatch = ch.name.toLowerCase().includes(filterText) || ch.program.toLowerCase().includes(filterText) || ch.number.includes(filterText);
+        return catMatch && textMatch;
+      });
+
+      if (filtered.length === 0) {
+        container.innerHTML = `<div class="p-8 text-center text-xs text-slate-500">Aucune chaîne ne correspond à la recherche.</div>`;
+        return;
+      }
+
+      filtered.forEach((ch, idx) => {
+        const isCurrent = channels[currentChannelIdx].id === ch.id;
+        const div = document.createElement("button");
+        div.className = `w-full text-left p-3 cursor-pointer transition-all flex items-center justify-between gap-3 tv-focusable touch-ripple ${
+          isCurrent 
+            ? "bg-gradient-to-r from-cyan-500/25 via-indigo-600/10 to-transparent border-l-4 border-cyan-400" 
+            : "hover:bg-white/[0.04] border-l-4 border-transparent"
+        }`;
+        div.setAttribute("data-channel-id", ch.id);
+        div.onclick = () => selectChannelById(ch.id);
+
+        div.innerHTML = `
+          <div class="flex items-center gap-3 min-w-0">
+            <span class="text-xs font-mono font-bold ${isCurrent ? 'text-cyan-400' : 'text-slate-500'} w-6 shrink-0">${ch.number}</span>
+            <div class="w-9 h-9 sm:w-10 sm:h-10 rounded-xl shrink-0 flex items-center justify-center ${
+              isCurrent ? "bg-cyan-400 text-slate-950 shadow-glow-cyan" : "bg-[#111728] text-cyan-300 border border-white/5"
+            }">
+              ${ch.icon}
+            </div>
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-2">
+                <span class="text-xs sm:text-sm font-semibold text-white truncate">${ch.name}</span>
+                <span class="text-[9px] font-mono px-1.5 py-0.2 rounded bg-white/10 text-cyan-300 shrink-0">${ch.quality.split("•")[0]}</span>
+              </div>
+              <p class="text-[11px] text-slate-400 truncate mt-0.5">${ch.program}</p>
+              <div class="w-full max-w-[130px] h-1 bg-slate-800 rounded-full mt-1.5 overflow-hidden">
+                <div class="h-full bg-cyan-400 rounded-full" style="width: ${ch.progress}%"></div>
+              </div>
+            </div>
+          </div>
+          <div class="flex flex-col items-end shrink-0">
+            <span class="text-[10px] font-mono text-emerald-400 font-semibold">${ch.bitrate}</span>
+            <span class="text-[9px] text-slate-500 mt-1">${isCurrent ? "● Actif" : "OK"}</span>
+          </div>
+        `;
+        container.appendChild(div);
+      });
+
+      refreshTvFocusElements();
+    }
+
+    // 3. Sélection de la chaîne et mise à jour OSD
+    function selectChannelById(id) {
+      const idx = channels.findIndex(c => c.id === id);
+      if (idx === -1) return;
+      currentChannelIdx = idx;
+      const ch = channels[currentChannelIdx];
+
+      // Mise à jour de l'OSD
+      document.getElementById("osdChannelTitle").textContent = ch.name;
+      document.getElementById("osdQualityBadge").textContent = ch.quality;
+      document.getElementById("osdProgramTitle").textContent = ch.program;
+      document.getElementById("osdChannelIcon").innerHTML = ch.icon;
+      document.getElementById("osdCodec").textContent = ch.codec;
+      document.getElementById("timeshiftStart").textContent = ch.start;
+      document.getElementById("timeshiftEnd").textContent = ch.end;
+      document.getElementById("timeshiftBar").style.width = ch.progress + "%";
+
+      // Télémétrie en haut
+      document.getElementById("topBitrateVal").textContent = ch.bitrate;
+
+      // Simulation du temps de zapping ultra-rapide
+      const zapTime = (Math.random() * (0.19 - 0.12) + 0.12).toFixed(2);
+      document.getElementById("osdZapTime").textContent = `${zapTime}s`;
+
+      showToast(`Zapping : [${ch.number}] ${ch.name}`);
+      renderChannels();
+      renderEPGCards(ch);
+      resetOsdTimer();
+    }
+
+    function prevChannel() {
+      currentChannelIdx = (currentChannelIdx - 1 + channels.length) % channels.length;
+      selectChannelById(channels[currentChannelIdx].id);
+    }
+
+    function nextChannel() {
+      currentChannelIdx = (currentChannelIdx + 1) % channels.length;
+      selectChannelById(channels[currentChannelIdx].id);
+    }
+
+    // 4. Cartes EPG
+    function renderEPGCards(ch) {
+      const grid = document.getElementById("epgCardsGrid");
+      grid.innerHTML = "";
+      ch.epg.forEach(item => {
+        const isLive = item.status === "En direct";
+        const card = document.createElement("div");
+        card.className = `p-2.5 rounded-xl border transition-all ${
+          isLive ? "bg-cyan-500/10 border-cyan-400/40" : "bg-slate-900/60 border-white/5"
+        }`;
+        card.innerHTML = `
+          <div class="flex items-center justify-between text-[10px] font-mono mb-1">
+            <span class="${isLive ? 'text-cyan-300 font-bold' : 'text-slate-400'}">${item.time}</span>
+            <span class="px-1.5 py-0.2 rounded text-[9px] ${
+              isLive ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' : 'bg-white/5 text-slate-400'
+            }">${item.status}</span>
+          </div>
+          <div class="text-xs font-medium text-white truncate">${item.title}</div>
+        `;
+        grid.appendChild(card);
+      });
+    }
+
+    // 5. Fonctions média & Timeshift
+    function togglePlayPause() {
+      isPlaying = !isPlaying;
+      const svg = document.getElementById("svgPlayPause");
+      if (isPlaying) {
+        svg.innerHTML = `
+          <rect x="6" y="4" width="4" height="16"></rect>
+          <rect x="14" y="4" width="4" height="16"></rect>
+        `;
+        showToast("Reprise de la lecture");
+      } else {
+        svg.innerHTML = `<polygon points="5 3 19 12 5 21 5 3"></polygon>`;
+        showToast("Flux en Pause (Timeshift actif)");
+      }
+    }
+
+    function toggleMute() {
+      isMuted = !isMuted;
+      const svg = document.getElementById("svgVolume");
+      const range = document.getElementById("volRange");
+      if (isMuted) {
+        range.value = 0;
+        svg.innerHTML = `
+          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+          <line x1="23" y1="9" x2="17" y2="15"></line>
+          <line x1="17" y1="9" x2="23" y2="15"></line>
+        `;
+        showToast("Audio coupé");
+      } else {
+        range.value = 80;
+        svg.innerHTML = `
+          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+          <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+        `;
+        showToast("Audio rétabli : 80%");
+      }
+    }
+
+    function setVolume(val) {
+      isMuted = val == 0;
+      const svg = document.getElementById("svgVolume");
+      if (val == 0) {
+        svg.innerHTML = `<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line>`;
+      } else {
+        svg.innerHTML = `<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>`;
+      }
+    }
+
+    function skipSeconds(sec) {
+      const ch = channels[currentChannelIdx];
+      ch.progress = Math.max(5, Math.min(98, ch.progress + (sec > 0 ? 5 : -5)));
+      document.getElementById("timeshiftBar").style.width = ch.progress + "%";
+      showToast(`${sec > 0 ? "+" : ""}${sec} secondes`);
+      renderChannels();
+    }
+
+    function seekTimeshift(e) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const pct = Math.max(5, Math.min(98, Math.round((clickX / rect.width) * 100)));
+      document.getElementById("timeshiftBar").style.width = pct + "%";
+      channels[currentChannelIdx].progress = pct;
+      showToast(`Reprise à ${pct}% du direct`);
+      renderChannels();
+    }
+
+    function changeAudioTrack() {
+      audioTrackIndex = (audioTrackIndex + 1) % audioTracks.length;
+      const track = audioTracks[audioTrackIndex];
+      document.getElementById("labelAudioTrack").textContent = track;
+      showToast(`Audio: ${track}`);
+    }
+
+    function toggleQuadView() {
+      isQuadView = !isQuadView;
+      const grid = document.getElementById("quadViewGrid");
+      const btn = document.getElementById("btnMultiScreen");
+      if (isQuadView) {
+        grid.classList.remove("hidden");
+        btn.classList.add("bg-cyan-400", "text-slate-950");
+        btn.classList.remove("text-cyan-300");
+        document.getElementById("topBitrateVal").textContent = "172.5 Mbps (4x 4K)";
+        showToast("Mosaïque Multi-écrans 4X activée");
+      } else {
+        grid.classList.add("hidden");
+        btn.classList.remove("bg-cyan-400", "text-slate-950");
+        btn.classList.add("text-cyan-300");
+        document.getElementById("topBitrateVal").textContent = channels[currentChannelIdx].bitrate;
+        showToast("Mode Écran Unique 4K");
+      }
+    }
+
+    function selectQuadStream(idx) {
+      selectChannelById(channels[idx].id);
+      showToast(`Focus audio sur flux n°${idx + 1}`);
+    }
+
+    function toggleEPGDrawer() {
+      const drawer = document.getElementById("epgTimelineDrawer");
+      drawer.classList.toggle("hidden");
+    }
+
+    function toggleFullScreen() {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(() => {});
+        showToast("Mode Plein Écran");
+      } else {
+        document.exitFullscreen().catch(() => {});
+        showToast("Sortie Plein Écran");
+      }
+    }
+
+    // Gestion de la visibilité OSD (Tactile Android / Télécommande)
+    function toggleOsdVisibility(e) {
+      if (e.target.closest('#quadViewGrid')) return;
+      isOsdVisible = !isOsdVisible;
+      const osdTop = document.getElementById("osdTop");
+      const osdBottom = document.getElementById("osdBottom");
+      if (isOsdVisible) {
+        osdTop.classList.remove("opacity-0", "-translate-y-4");
+        osdBottom.classList.remove("opacity-0", "translate-y-4");
+        resetOsdTimer();
+      } else {
+        osdTop.classList.add("opacity-0", "-translate-y-4");
+        osdBottom.classList.add("opacity-0", "translate-y-4");
+      }
+    }
+
+    function resetOsdTimer() {
+      clearTimeout(osdHideTimeout);
+      osdHideTimeout = setTimeout(() => {
+        if (isPlaying && !isQuadView) {
+          const osdTop = document.getElementById("osdTop");
+          const osdBottom = document.getElementById("osdBottom");
+          osdTop.classList.add("opacity-0", "-translate-y-4");
+          osdBottom.classList.add("opacity-0", "translate-y-4");
+          isOsdVisible = false;
+        }
+      }, 5000);
+    }
+
+    // Toast de notification
+    let toastTimer;
+    function showToast(msg) {
+      const toast = document.getElementById("toastMessage");
+      document.getElementById("toastText").textContent = msg;
+      toast.classList.remove("opacity-0");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => {
+        toast.classList.add("opacity-0");
+      }, 1400);
+    }
+
+    // Modals Playlist & D-Pad
+    function openPlaylistModal() { document.getElementById("playlistModal").classList.remove("hidden"); }
+    function closePlaylistModal() { document.getElementById("playlistModal").classList.add("hidden"); }
+    function toggleDpadHelp() { document.getElementById("dpadModal").classList.toggle("hidden"); }
+
+    function switchPlaylistType(type) {
+      const tabM3U = document.getElementById("tabM3U");
+      const tabXtream = document.getElementById("tabXtream");
+      const formM3U = document.getElementById("formM3U");
+      const formXtream = document.getElementById("formXtream");
+
+      if (type === "m3u") {
+        tabM3U.className = "py-1.5 text-xs font-semibold rounded-lg bg-cyan-400 text-slate-950 transition-all";
+        tabXtream.className = "py-1.5 text-xs font-semibold rounded-lg text-slate-400 hover:text-white transition-all";
+        formM3U.classList.remove("hidden");
+        formXtream.classList.add("hidden");
+      } else {
+        tabXtream.className = "py-1.5 text-xs font-semibold rounded-lg bg-cyan-400 text-slate-950 transition-all";
+        tabM3U.className = "py-1.5 text-xs font-semibold rounded-lg text-slate-400 hover:text-white transition-all";
+        formXtream.classList.remove("hidden");
+        formM3U.classList.add("hidden");
+      }
+    }
+
+    function savePlaylistMock() {
+      closePlaylistModal();
+      showToast("Playlist synchronisée : 8 Chaînes 4K chargées");
+      renderChannels();
+    }
+
+    function switchView(viewName) {
+      document.querySelectorAll(".nav-btn").forEach(b => {
+        b.classList.remove("active-nav", "bg-cyan-500/10", "border-cyan-400/40", "text-cyan-400", "shadow-glow-cyan");
+        b.classList.add("text-slate-400", "border-transparent");
+      });
+      const activeBtn = document.querySelector(`.nav-btn[data-view="${viewName}"]`);
+      if (activeBtn) {
+        activeBtn.classList.add("active-nav", "bg-cyan-500/10", "border-cyan-400/40", "text-cyan-400", "shadow-glow-cyan");
+      }
+      showToast(`Section : ${viewName.toUpperCase()}`);
+    }
+
+    // Gestion des catégories
+    document.querySelectorAll(".cat-chip").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".cat-chip").forEach(b => {
+          b.className = "cat-chip tv-focusable px-3 py-1 rounded-lg text-xs font-medium whitespace-nowrap bg-slate-900 text-slate-400 hover:text-white border border-white/5 transition-all";
+        });
+        btn.className = "cat-chip tv-focusable active-chip px-3 py-1 rounded-lg text-xs font-semibold whitespace-nowrap bg-cyan-400 text-slate-950 transition-all";
+        selectedCat = btn.getAttribute("data-cat");
+        renderChannels();
+      });
+    });
+
+    document.getElementById("channelSearch").addEventListener("input", renderChannels);
+
+    // ============================================================
+    // NAVIGATION D-PAD POUR TÉLÉCOMMANDE SMART TV (FOCUS SPATIAL)
+    // ============================================================
+    function refreshTvFocusElements() {
+      tvFocusableElements = Array.from(document.querySelectorAll(".tv-focusable:not([disabled]):not(.hidden)"));
+    }
+
+    function setTvFocus(index) {
+      if (!tvFocusableElements.length) return;
+      tvFocusableElements.forEach(el => el.classList.remove("tv-focused"));
+      currentFocusIndex = (index + tvFocusableElements.length) % tvFocusableElements.length;
+      const target = tvFocusableElements[currentFocusIndex];
+      if (target) {
+        target.classList.add("tv-focused");
+        target.focus({ preventScroll: false });
+        target.scrollIntoView({ block: "nearest", inline: "nearest" });
+      }
+    }
+
+    // Raccourcis Télécommande / Clavier
+    window.addEventListener("keydown", (e) => {
+      // Si une boîte modale est ouverte, touche Escape pour fermer
+      if (e.key === "Escape") {
+        closePlaylistModal();
+        document.getElementById("dpadModal").classList.add("hidden");
+        return;
+      }
+
+      // Raccourcis télécommande dédiés
+      if (e.key === "p" || e.key === "P") { togglePlayPause(); return; }
+      if (e.key === "m" || e.key === "M") { toggleQuadView(); return; }
+      if (e.key === "f" || e.key === "F") { toggleFullScreen(); return; }
+
+      // Touches Flèches (D-Pad)
+      if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
+        e.preventDefault();
+        refreshTvFocusElements();
+        
+        if (e.key === "ArrowDown") setTvFocus(currentFocusIndex + 1);
+        if (e.key === "ArrowUp") setTvFocus(currentFocusIndex - 1);
+        if (e.key === "ArrowRight") {
+          // Si on est dans le volet des chaînes, passer à la chaîne suivante
+          nextChannel();
+        }
+        if (e.key === "ArrowLeft") {
+          prevChannel();
+        }
+      }
+
+      // Touche OK / Entrée
+      if (e.key === "Enter") {
+        if (tvFocusableElements[currentFocusIndex]) {
+          tvFocusableElements[currentFocusIndex].click();
+        }
+      }
+    });
+
+    // ============================================================
+    // MOTEUR CANVAS : FLUX VIDÉO SIMULÉ ULTRA-FLUIDE À 60 FPS
+    // ============================================================
+    const canvas = document.getElementById("streamCanvas");
+    const ctx = canvas.getContext("2d");
+    let animTime = 0;
+
+    function resizeCanvas() {
+      const p = canvas.parentElement;
+      canvas.width = p.clientWidth;
+      canvas.height = p.clientHeight;
+    }
+
+    window.addEventListener("resize", resizeCanvas);
+
+    function renderStream() {
+      const w = canvas.width;
+      const h = canvas.height;
+      const ch = channels[currentChannelIdx];
+
+      if (isPlaying) {
+        animTime += 0.025;
+      }
+
+      // Fond de diffusion immersif avec gradient orbital
+      const grad = ctx.createRadialGradient(
+        w * (0.5 + Math.sin(animTime * 0.4) * 0.15),
+        h * (0.5 + Math.cos(animTime * 0.3) * 0.15),
+        20,
+        w * 0.5,
+        h * 0.5,
+        Math.max(w, h) * 0.75
+      );
+      grad.addColorStop(0, ch.theme + "33");
+      grad.addColorStop(0.5, ch.secondary + "15");
+      grad.addColorStop(1, "#030612");
+
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, w, h);
+
+      // Lignes de balayage cinéma / scanlines subtiles
+      ctx.fillStyle = "rgba(0, 0, 0, 0.18)";
+      for (let y = 0; y < h; y += 4) {
+        ctx.fillRect(0, y, w, 1);
+      }
+
+      // Onde de transmission 60 FPS (flux continu ultra-stable)
+      for (let j = 0; j < 3; j++) {
+        ctx.beginPath();
+        ctx.strokeStyle = j === 0 ? ch.theme : ch.secondary + "77";
+        ctx.lineWidth = j === 0 ? 3 : 1.5;
+
+        for (let x = 0; x <= w; x += 12) {
+          const y = h * 0.5 + Math.sin(x * 0.008 + animTime * (2 + j * 0.5)) * (28 + j * 15) + Math.cos(x * 0.004 - animTime) * 16;
+          if (x === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+      }
+
+      // Particules flottantes d'ambiance
+      for (let p = 0; p < 18; p++) {
+        const px = ((p * 90 + animTime * (50 + (p % 5) * 10)) % (w + 40)) - 20;
+        const py = h * 0.2 + ((Math.sin(animTime * 0.8 + p) * 0.5 + 0.5) * (h * 0.6));
+        ctx.beginPath();
+        ctx.fillStyle = p % 2 === 0 ? ch.theme : "#ffffff";
+        ctx.arc(px, py, (p % 2.5) + 1, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      requestAnimationFrame(renderStream);
+    }
+
+    // Démarrage
+    window.onload = function () {
+      resizeCanvas();
+      renderChannels();
+      selectChannelById(1);
+      renderStream();
+      resetOsdTimer();
+
+      // Détection automatique si écran tactile mobile
+      if (window.innerWidth <= 768) {
+        setDeviceMode("android");
+      } else {
+        setDeviceMode("tv");
+      }
+    };
+  </script>
+</body>
+</html>
