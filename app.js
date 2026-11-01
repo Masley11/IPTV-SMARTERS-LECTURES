@@ -337,6 +337,7 @@ function showWelcomeOnboarding() {
   actions.append(qrBtn, manualBtn);
   box.append(strong, text, actions);
   box.hidden = false;
+  window.dispatchEvent(new CustomEvent('onda:catalogue-updated'));
 }
 
 function setStatus(message, title = '', retry = false) {
@@ -397,11 +398,13 @@ async function load() {
     state.account = account;
     renderCategories();
     renderChannels();
+    window.dispatchEvent(new CustomEvent('onda:catalogue-updated'));
   } catch (error) {
     state.categories = []; state.streams = []; state.account = null;
     renderCategories();
     $('result-count').textContent = '0'; $('list-subtitle').textContent = 'Connexion indisponible';
     setStatus(error.message, 'Impossible de charger les chaînes', true);
+    window.dispatchEvent(new CustomEvent('onda:catalogue-updated'));
   } finally { state.loading = false; }
 }
 
@@ -1154,6 +1157,13 @@ $('close-about').addEventListener('click', closeAbout);
 });
 
 $('close-player').addEventListener('click', closePlayer);
+if ($('switch-to-streampulse')) {
+  $('switch-to-streampulse').addEventListener('click', () => {
+    const ch = state.current;
+    closePlayer();
+    if (window.StreamPulse) window.StreamPulse.open(ch);
+  });
+}
 $('fullscreen').addEventListener('click', () => {
   const video = $('video');
   if (document.fullscreenElement) document.exitFullscreen();
@@ -1179,6 +1189,9 @@ function activeModalElement() {
 
 document.addEventListener('keydown', (event) => {
   const modal = activeModalElement();
+  if (!modal && window.StreamPulse && window.StreamPulse.isOpen()) {
+    return;
+  }
   if (event.key === 'Escape' || (event.key === 'Backspace' && event.target.tagName !== 'INPUT')) {
     if (modal) {
       if (modal.id === 'player-overlay') closePlayer();
@@ -1227,3 +1240,38 @@ if (!openedFromQr || hasCredentials()) {
 } else {
   showWelcomeOnboarding();
 }
+
+// Pont de lecture seule / délégation pour le module isolé #streampulse-module (zéro modification d'auth)
+window.ONDA_BRIDGE = {
+  getState: () => ({
+    categories: state.categories,
+    streams: state.streams,
+    account: state.account,
+    credentials: state.credentials,
+    lockedServer: state.lockedServer
+  }),
+  buildStreamUrl: (action, streamId) => {
+    if (!hasCredentials()) return '';
+    return params(action, { id: streamId, ...zappingParam(), _t: Date.now() });
+  },
+  parseXtreamText,
+  markLocalPlay: () => {
+    state.localStreaming = true;
+    markLocalPlay();
+  },
+  isOwnSessionCoolingDown,
+  stopRootPlayback: () => {
+    if (!$('player-overlay').hidden) closePlayer();
+    else destroyPlayback();
+  },
+  hasActiveRootModal: () => Boolean(activeModalElement()),
+  openQrPair: () => openTvPair(),
+  openSettings: () => openSettings(),
+  connectXtream: (creds) => {
+    saveCredentials(creds);
+    state.selected = 'all';
+    state.visible = 40;
+    load();
+  }
+};
+

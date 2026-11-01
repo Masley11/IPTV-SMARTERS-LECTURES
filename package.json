@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "node dev-server.js",
     "start": "node dev-server.js",
-    "test": "node --test tests/iptv.test.js"
+    "test": "node --test tests/iptv.test.js tests/streampulse.test.js"
   },
   "engines": { "node": ">=18" }
 }
