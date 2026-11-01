@@ -98,6 +98,64 @@ function saveCredentials(next) {
 function clearCredentials() {
   state.credentials = { ...EMPTY_CREDS };
   try { localStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
+  clearCatalogueCache();
+}
+
+// --- Cache local IndexedDB (12h) pour économiser 99% du Fast Origin Transfer Vercel sur le catalogue ---
+const CATALOGUE_DB_NAME = 'onda-catalogue-cache-v1';
+const CATALOGUE_STORE = 'catalogues';
+const CATALOGUE_TTL_MS = 12 * 60 * 60 * 1000;
+
+function openCatalogueDb() {
+  return new Promise((resolve, reject) => {
+    if (typeof indexedDB === 'undefined') return reject(new Error('no-idb'));
+    const req = indexedDB.open(CATALOGUE_DB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(CATALOGUE_STORE)) {
+        db.createObjectStore(CATALOGUE_STORE);
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function readCatalogueCache(cacheKey) {
+  try {
+    const db = await openCatalogueDb();
+    return await new Promise((resolve) => {
+      const tx = db.transaction(CATALOGUE_STORE, 'readonly');
+      const getReq = tx.objectStore(CATALOGUE_STORE).get(cacheKey);
+      getReq.onsuccess = () => {
+        const entry = getReq.result;
+        if (entry && entry.savedAt && (Date.now() - entry.savedAt) < CATALOGUE_TTL_MS && Array.isArray(entry.categories) && Array.isArray(entry.streams)) {
+          resolve(entry);
+        } else {
+          resolve(null);
+        }
+      };
+      getReq.onerror = () => resolve(null);
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function writeCatalogueCache(cacheKey, categories, streams) {
+  try {
+    const db = await openCatalogueDb();
+    const tx = db.transaction(CATALOGUE_STORE, 'readwrite');
+    tx.objectStore(CATALOGUE_STORE).put({ categories, streams, savedAt: Date.now() }, cacheKey);
+  } catch { /* ignore quota or private mode */ }
+}
+
+async function clearCatalogueCache() {
+  try {
+    const db = await openCatalogueDb();
+    const tx = db.transaction(CATALOGUE_STORE, 'readwrite');
+    tx.objectStore(CATALOGUE_STORE).clear();
+  } catch { /* ignore */ }
 }
 
 function readMode() {
@@ -105,6 +163,14 @@ function readMode() {
     const saved = localStorage.getItem(MODE_KEY);
     return ['auto', 'hls', 'ts'].includes(saved) ? saved : 'auto';
   } catch { return 'auto'; }
+}
+
+function activeRelayOrigin() {
+  try {
+    const custom = (localStorage.getItem('sp-relay-url') || '').trim().replace(/\/+$/, '');
+    if (/^https?:\/\//i.test(custom)) return custom;
+  } catch { /* ignore */ }
+  return state.relayUrl || '';
 }
 
 function params(action, extra = {}) {
@@ -117,7 +183,8 @@ function params(action, extra = {}) {
   if (!state.lockedServer && state.credentials.server) {
     q.server = normalizeServer(state.credentials.server);
   }
-  return '/api/iptv?' + new URLSearchParams(q);
+  const relay = (action === 'play' || action === 'ts') ? activeRelayOrigin() : '';
+  return (relay ? relay + '/api/iptv?' : '/api/iptv?') + new URLSearchParams(q);
 }
 
 function mpegtsSupported() {
@@ -364,19 +431,24 @@ function setStatus(message, title = '', retry = false) {
   box.hidden = false;
 }
 
-async function load() {
+async function load(forceRefresh = false) {
+  if (forceRefresh && typeof forceRefresh === 'object') forceRefresh = true;
   if (state.loading) return;
   state.loading = true;
   state.lastError = '';
   window.dispatchEvent(new CustomEvent('onda:catalogue-updated'));
   try {
-    try {
-      const config = await requestJSON('/api/iptv?action=config');
-      state.lockedServer = config.locked && config.server ? normalizeServer(config.server) : null;
-      if (state.lockedServer && !state.credentials.server) {
-        state.credentials.server = state.lockedServer;
-      }
-    } catch { /* ignore config preflight error */ }
+    if (!state.configChecked || forceRefresh) {
+      try {
+        const config = await requestJSON('/api/iptv?action=config');
+        state.configChecked = true;
+        state.lockedServer = config.locked && config.server ? normalizeServer(config.server) : null;
+        state.relayUrl = config.relayUrl || '';
+        if (state.lockedServer && !state.credentials.server) {
+          state.credentials.server = state.lockedServer;
+        }
+      } catch { /* ignore config preflight error */ }
+    }
 
     if (!hasCredentials()) {
       showWelcomeOnboarding();
@@ -389,6 +461,20 @@ async function load() {
     if (state.lockedServer && normalizeServer(state.credentials.server) !== state.lockedServer) {
       throw new Error('Ce déploiement est configuré uniquement pour ' + state.lockedServer + '.');
     }
+
+    const effectiveServer = state.lockedServer || normalizeServer(state.credentials.server);
+    const cacheKey = `${effectiveServer}|${state.credentials.username}`;
+    const cached = !forceRefresh ? await readCatalogueCache(cacheKey) : null;
+
+    if (cached && cached.streams.length) {
+      state.categories = cached.categories;
+      state.streams = cached.streams;
+      renderCategories();
+      renderChannels();
+      requestJSON(params('account')).then((acc) => { state.account = acc; }).catch(() => {});
+      return;
+    }
+
     const [categories, streams, account] = await Promise.all([
       requestJSON(params('categories')),
       requestJSON(params('streams')),
@@ -398,6 +484,7 @@ async function load() {
     state.categories = categories.filter(item => item && item.category_id != null);
     state.streams = streams.filter(item => item && /^\d+$/.test(String(item.stream_id)));
     state.account = account;
+    writeCatalogueCache(cacheKey, state.categories, state.streams);
     renderCategories();
     renderChannels();
   } catch (error) {
@@ -974,7 +1061,7 @@ async function startTvPairSession() {
         state.selected = 'all';
         state.visible = 40;
         closeTvPair();
-        await load();
+        await load(true);
         return;
       }
       if (typeof data.expiresIn === 'number') {
@@ -1061,7 +1148,7 @@ $('settings-form').addEventListener('submit', (event) => {
   state.selected = 'all';
   state.visible = 40;
   closeSettings();
-  load();
+  load(true);
 });
 
 $('logout-device').addEventListener('click', () => {
@@ -1266,7 +1353,7 @@ window.ONDA_BRIDGE = {
     markLocalPlay();
   },
   refreshAccount: () => refreshAccount(),
-  refreshCatalogue: () => load(),
+  refreshCatalogue: () => load(true),
   isOwnSessionCoolingDown,
   stopRootPlayback: () => {
     if (!$('player-overlay').hidden) closePlayer();
@@ -1284,7 +1371,7 @@ window.ONDA_BRIDGE = {
     saveCredentials(creds);
     state.selected = 'all';
     state.visible = 40;
-    load();
+    load(true);
   }
 };
 

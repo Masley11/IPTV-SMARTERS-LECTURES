@@ -159,8 +159,16 @@ test('Unified single interface, 100% SVG (zero stickers/emojis), auto-responsive
     'assets/pwa-icon-192.png',
     'assets/apple-touch-icon.png',
     'assets/favicon.png',
-    'assets/standby-backdrop.jpg'
+    'assets/standby-backdrop.jpg',
+    'worker/cloudflare-stream-relay.js'
   ]) {
     assert.equal(fs.existsSync(path.join(ROOT, rel)), true, `Missing asset: ${rel}`);
   }
+
+  // 7. Vercel Fast Origin Transfer optimizations: gzip + field pruning, IndexedDB cache, lean HLS zapping buffer
+  const apiSource = fs.readFileSync(path.join(ROOT, 'api/iptv.js'), 'utf8');
+  const appSource = fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8');
+  assert.match(apiSource, /zlib\.gzipSync/);
+  assert.match(appSource, /onda-catalogue-cache-v1/);
+  assert.match(jsSource, /maxBufferLength:\s*this\.ecoMode\s*\?\s*12\s*:\s*16/);
 });

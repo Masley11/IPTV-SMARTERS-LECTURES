@@ -21,6 +21,7 @@
   const FAV_STORAGE_KEY = 'sp-favorites-v1';
   const PROTO_STORAGE_KEY = 'sp-protocol-v1';
   const LAST_CH_STORAGE_KEY = 'sp-last-channel-v1';
+  const ECO_STORAGE_KEY = 'sp-eco-mode-v1';
 
   /* Pure vector SVG icon set — zero emojis or Unicode dingbats */
   const ICONS = {
@@ -175,6 +176,7 @@
       this.filtered = [];
       this.favorites = this.readFavorites();
       this.protocol = this.readProtocol(); // 'auto' | 'hls' | 'ts'
+      this.ecoMode = this.readEcoMode(); // Caps bandwidth/resolution to save Fast Origin Transfer
       this.lastSavedChannelId = this.readLastChannelId();
 
       this.isLoadingCatalogue = false;
@@ -259,6 +261,11 @@
     readLastChannelId() {
       try { return localStorage.getItem(LAST_CH_STORAGE_KEY) || ''; }
       catch { return ''; }
+    }
+
+    readEcoMode() {
+      try { return localStorage.getItem(ECO_STORAGE_KEY) === '1'; }
+      catch { return false; }
     }
 
     saveLastChannelId(id) {
@@ -1318,7 +1325,7 @@
       const catName = channel.category_name || this.categoryMap.get(String(channel.category_id)) || 'Télévision en direct';
       this.q('[data-sp="osdTitle"]').textContent = channel.name || 'Chaîne';
       this.q('[data-sp="osdCat"]').textContent = catName;
-      this.q('[data-sp="abrBtn"]').textContent = 'ABR Auto';
+      this.q('[data-sp="abrBtn"]').textContent = this.ecoMode ? 'Éco Données' : 'ABR Auto';
       this.updateCurrentFavButton();
       this.renderVirtualChannels();
       this.wakeOsd();
@@ -1375,15 +1382,16 @@
 
       if (rootGlobal.Hls && rootGlobal.Hls.isSupported()) {
         const HlsClass = rootGlobal.Hls;
+        const hasValidSize = video && video.clientWidth >= 320;
         const hls = new HlsClass({
           startLevel: -1, // Adaptive Bitrate (ABR) strictly active
-          capLevelToPlayerSize: false,
+          capLevelToPlayerSize: Boolean(hasValidSize),
           lowLatencyMode: false,
           liveSyncDurationCount: 3,
-          liveMaxLatencyDurationCount: 10,
-          backBufferLength: 30,
-          maxBufferLength: 50,
-          maxMaxBufferLength: 90,
+          liveMaxLatencyDurationCount: 8,
+          backBufferLength: 10,
+          maxBufferLength: this.ecoMode ? 12 : 16,
+          maxMaxBufferLength: this.ecoMode ? 20 : 28,
           maxBufferHole: 0.8,
           highBufferWatchdogPeriod: 3,
           nudgeOffset: 0.2,
@@ -1420,6 +1428,10 @@
           if (data && Array.isArray(data.levels) && data.levels.length) {
             const best = data.levels[data.levels.length - 1];
             if (best && best.videoCodec) this.detectedCodec = best.videoCodec.toUpperCase();
+            if (this.ecoMode && data.levels.length > 1) {
+              const idx720 = data.levels.findIndex((l) => l.height && l.height <= 720);
+              if (idx720 >= 0) hls.autoLevelCapping = idx720;
+            }
           }
           this.safeStartVideoPlayback(video, token);
         });
@@ -1884,14 +1896,18 @@
 
     cycleAbrQuality() {
       if (!this.hls || !Array.isArray(this.hls.levels) || this.hls.levels.length <= 1) {
-        this.showToast('Qualité automatique optimale (flux mono-palier)');
+        this.ecoMode = !this.ecoMode;
+        try { localStorage.setItem(ECO_STORAGE_KEY, this.ecoMode ? '1' : '0'); } catch { /* ignore */ }
+        const ecoLabel = this.ecoMode ? 'Éco Données' : 'ABR Auto';
+        this.q('[data-sp="abrBtn"]').textContent = ecoLabel;
+        this.showToast(this.ecoMode ? 'Mode Éco Données actif (tampon réduit)' : 'Mode ABR Auto standard');
         return;
       }
       const levels = this.hls.levels;
       this.abrSelection = this.abrSelection >= levels.length - 1 ? -1 : this.abrSelection + 1;
       this.hls.currentLevel = this.abrSelection;
       const label = this.abrSelection === -1
-        ? 'ABR Auto'
+        ? (this.ecoMode ? 'Éco Données' : 'ABR Auto')
         : `${levels[this.abrSelection].height || this.abrSelection + 1}p`;
       this.q('[data-sp="abrBtn"]').textContent = label;
       this.showToast(`Qualité vidéo : ${label}`);

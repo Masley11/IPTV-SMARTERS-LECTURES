@@ -3,6 +3,7 @@
 const crypto = require('node:crypto');
 const dns = require('node:dns').promises;
 const net = require('node:net');
+const zlib = require('node:zlib');
 
 const MAX_JSON_BYTES = 15 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 2 * 1024 * 1024;
@@ -447,6 +448,7 @@ async function streamReaderToResponse(head, reader, done, res, abortSignal) {
 }
 
 async function deliverSegment(head, reader, done, contentType, contentLengthHeader, res, abortSignal) {
+  res.setHeader('Cache-Control', 'no-store, no-transform');
   res.setHeader('Content-Type', contentType || 'application/octet-stream');
   const declaredLength = Number(contentLengthHeader || 0);
   if (done || !reader) {
@@ -572,7 +574,7 @@ function fail(res, status, message, extra = {}) {
 }
 
 module.exports = async function handler(req, res) {
-  res.setHeader('Cache-Control', 'no-store, no-transform');
+  res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Referrer-Policy', 'no-referrer');
   res.setHeader('X-Content-Type-Options', 'nosniff');
 
@@ -676,7 +678,8 @@ module.exports = async function handler(req, res) {
 
     if (action === 'config') {
       const locked = lockedOrigin();
-      return sendJSON(res, 200, { server: locked || null, locked: Boolean(locked) });
+      const relayUrl = (process.env.STREAM_RELAY_URL || '').trim().replace(/\/+$/, '') || null;
+      return sendJSON(res, 200, { server: locked || null, locked: Boolean(locked), relayUrl });
     }
 
     const { base, isLocked } = resolveBase(query);
@@ -708,8 +711,27 @@ module.exports = async function handler(req, res) {
       if (text.length > MAX_JSON_BYTES) return fail(res, 502, 'Liste trop volumineuse');
       let data;
       try { data = JSON.parse(text); } catch { return fail(res, 502, 'Réponse API invalide (vérifiez vos identifiants)'); }
+      if (Array.isArray(data)) {
+        data = action === 'categories'
+          ? data.filter(it => it && it.category_id != null).map(it => ({ category_id: it.category_id, category_name: it.category_name }))
+          : data.filter(it => it && it.stream_id != null).map(it => {
+              const slim = { stream_id: it.stream_id, name: it.name };
+              if (it.category_id != null) slim.category_id = it.category_id;
+              if (it.stream_icon && /^https:\/\//i.test(it.stream_icon)) slim.stream_icon = it.stream_icon;
+              return slim;
+            });
+      }
+      const rawBuf = Buffer.from(JSON.stringify(data));
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
-      return res.end(JSON.stringify(data));
+      res.setHeader('Vary', 'Accept-Encoding');
+      if (rawBuf.length > 512 && /\bgzip\b/i.test(String(req.headers['accept-encoding'] || ''))) {
+        const gz = zlib.gzipSync(rawBuf, { level: 6 });
+        res.setHeader('Content-Encoding', 'gzip');
+        res.setHeader('Content-Length', String(gz.length));
+        return res.end(gz);
+      }
+      res.setHeader('Content-Length', String(rawBuf.length));
+      return res.end(rawBuf);
     }
 
     if (action === 'ts') {
@@ -753,6 +775,7 @@ module.exports = async function handler(req, res) {
         return fail(res, 502, 'Chaîne actuellement hors antenne (aucun flux vidéo reçu)', { code: 'OFFLINE' });
       }
       res.statusCode = 200;
+      res.setHeader('Cache-Control', 'no-store, no-transform');
       res.setHeader('Content-Type', 'video/mp2t');
       res.setHeader('X-Accel-Buffering', 'no');
       res.flushHeaders?.();
@@ -811,8 +834,36 @@ module.exports = async function handler(req, res) {
       return fail(res, diag.status, diag.message, diag.extra);
     }
 
-    const contentType = response.headers.get('content-type') || '';
-    const { head, reader, done } = await peekBody(response.body, 512, requestAbort.signal);
+    let contentType = response.headers.get('content-type') || '';
+    let { head, reader, done } = await peekBody(response.body, 512, requestAbort.signal);
+
+    // On-Demand Xtream channel wake-up: if first hit returns 0 bytes while provider starts FFmpeg, retry once after 1.6s
+    if (!head.length && action === 'play' && !requestAbort.signal.aborted) {
+      try { await reader?.cancel(); } catch { /* ignore */ }
+      await sleep(1600, requestAbort.signal);
+      const retryFetch = await upstreamFetch(targetPath, {
+        base,
+        isLocked,
+        allowExternal,
+        signal: requestAbort.signal,
+        connectTimeoutMs: 15000,
+        returnRedirectTarget: true
+      });
+      if (retryFetch.redirectURL) {
+        res.statusCode = 302;
+        res.setHeader('Location', playbackURL(auth, base, isLocked, retryFetch.redirectURL, {
+          manifest: '1',
+          ...(isZapping ? { zapping: '1' } : {})
+        }));
+        return res.end();
+      }
+      if (retryFetch.response && retryFetch.response.ok) {
+        contentType = retryFetch.response.headers.get('content-type') || '';
+        ({ head, reader, done } = await peekBody(retryFetch.response.body, 512, requestAbort.signal));
+      } else {
+        try { await retryFetch.response?.body?.cancel(); } catch { /* ignore */ }
+      }
+    }
 
     if (looksLikeHLS(head)) {
       const fullBuf = await readRemainingBytes(head, reader, done, MAX_MANIFEST_BYTES);
