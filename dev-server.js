@@ -3,8 +3,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const handler = require('./api/iptv');
 const root = __dirname;
-const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
-const allowedFiles = ['/index.html', '/app.js', '/style.css', '/assets/hls.min.js', '/assets/mpegts.min.js', '/assets/qrcode.min.js', '/assets/shaka-player.compiled.js', '/streampulse/streampulse.css', '/streampulse/streampulse.js'];
+const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.webmanifest': 'application/manifest+json; charset=utf-8' };
+const allowedFiles = ['/index.html', '/app.js', '/style.css', '/manifest.webmanifest', '/sw.js', '/assets/hls.min.js', '/assets/mpegts.min.js', '/assets/qrcode.min.js', '/assets/shaka-player.compiled.js', '/assets/pwa-icon-512.png', '/assets/pwa-icon-192.png', '/assets/apple-touch-icon.png', '/assets/favicon.png', '/assets/standby-backdrop.jpg', '/streampulse/streampulse.css', '/streampulse/streampulse.js'];
 http.createServer((req, res) => {
   if (req.url.startsWith('/api/iptv')) return handler(req, res);
   const pathname = new URL(req.url, 'http://localhost').pathname;

@@ -367,6 +367,8 @@ function setStatus(message, title = '', retry = false) {
 async function load() {
   if (state.loading) return;
   state.loading = true;
+  state.lastError = '';
+  window.dispatchEvent(new CustomEvent('onda:catalogue-updated'));
   try {
     try {
       const config = await requestJSON('/api/iptv?action=config');
@@ -398,14 +400,16 @@ async function load() {
     state.account = account;
     renderCategories();
     renderChannels();
-    window.dispatchEvent(new CustomEvent('onda:catalogue-updated'));
   } catch (error) {
+    state.lastError = error.message || 'Impossible de charger les chaînes.';
     state.categories = []; state.streams = []; state.account = null;
     renderCategories();
     $('result-count').textContent = '0'; $('list-subtitle').textContent = 'Connexion indisponible';
     setStatus(error.message, 'Impossible de charger les chaînes', true);
+  } finally {
+    state.loading = false;
     window.dispatchEvent(new CustomEvent('onda:catalogue-updated'));
-  } finally { state.loading = false; }
+  }
 }
 
 function filtered() {
@@ -1117,7 +1121,7 @@ $('phone-pair-form').addEventListener('submit', async (event) => {
       saveCredentials(creds);
     }
 
-    okBox.textContent = '✓ C’est envoyé ! Vos chaînes s’ouvrent automatiquement sur votre téléviseur.';
+    okBox.textContent = 'Identifiants transmis : vos chaînes s’ouvrent automatiquement sur votre téléviseur.';
     okBox.hidden = false;
     if ($('phone-save-local').checked) {
       load();
@@ -1248,7 +1252,9 @@ window.ONDA_BRIDGE = {
     streams: state.streams,
     account: state.account,
     credentials: state.credentials,
-    lockedServer: state.lockedServer
+    lockedServer: state.lockedServer,
+    loading: state.loading,
+    lastError: state.lastError || ''
   }),
   buildStreamUrl: (action, streamId) => {
     if (!hasCredentials()) return '';
@@ -1259,6 +1265,8 @@ window.ONDA_BRIDGE = {
     state.localStreaming = true;
     markLocalPlay();
   },
+  refreshAccount: () => refreshAccount(),
+  refreshCatalogue: () => load(),
   isOwnSessionCoolingDown,
   stopRootPlayback: () => {
     if (!$('player-overlay').hidden) closePlayer();
@@ -1267,6 +1275,11 @@ window.ONDA_BRIDGE = {
   hasActiveRootModal: () => Boolean(activeModalElement()),
   openQrPair: () => openTvPair(),
   openSettings: () => openSettings(),
+  openAbout: () => openAbout(),
+  logoutDevice: () => {
+    clearCredentials();
+    showWelcomeOnboarding();
+  },
   connectXtream: (creds) => {
     saveCredentials(creds);
     state.selected = 'all';

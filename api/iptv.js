@@ -789,20 +789,23 @@ module.exports = async function handler(req, res) {
       allowExternal,
       signal: requestAbort.signal,
       connectTimeoutMs: 15000,
-      retryDelays: action === 'play' ? lockRetries : [350, 800, 1400],
+      retryDelays: expectsManifest && isZapping ? lockRetries : (action === 'play' ? [] : [350, 800, 1400]),
       returnRedirectTarget: action === 'play'
     });
 
     if (fetched.redirectURL) {
       res.statusCode = 302;
-      res.setHeader('Location', playbackURL(auth, base, isLocked, fetched.redirectURL, { manifest: '1' }));
+      res.setHeader('Location', playbackURL(auth, base, isLocked, fetched.redirectURL, {
+        manifest: '1',
+        ...(isZapping ? { zapping: '1' } : {})
+      }));
       return res.end();
     }
 
     const { response, finalURL } = fetched;
     if (!response.ok) {
       try { await response.body?.cancel(); } catch { /* ignore */ }
-      const diag = action === 'play'
+      const diag = expectsManifest
         ? await diagnoseAuthRejection(base, isLocked, auth, response.status, requestAbort.signal)
         : { status: 502, message: `Le serveur IPTV a répondu ${response.status}`, extra: {} };
       return fail(res, diag.status, diag.message, diag.extra);
