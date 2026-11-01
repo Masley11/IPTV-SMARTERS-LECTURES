@@ -16,7 +16,61 @@ const USER_AGENT = 'IPTVSmartersPro/4.0 (Linux; Android 13) VLC/3.0.20';
 
 const pairSessions = globalThis.__ondaPairSessions || (globalThis.__ondaPairSessions = new Map());
 const safeHostCache = globalThis.__ondaSafeHostCache || (globalThis.__ondaSafeHostCache = new Map());
+const epgCache = globalThis.__ondaEpgCache || (globalThis.__ondaEpgCache = new Map());
 const SAFE_HOST_TTL_MS = 10 * 60 * 1000;
+const EPG_TTL_MS = 2 * 60 * 1000;
+const MAX_EPG_CACHE = 400;
+
+function decodeXtreamEpgText(raw) {
+  const s = String(raw ?? '').trim();
+  if (!s) return '';
+  if (s.length >= 4 && s.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(s)) {
+    try {
+      const buf = Buffer.from(s, 'base64');
+      if (buf.length > 0 && buf.toString('base64').replace(/=+$/, '') === s.replace(/=+$/, '')) {
+        const utf8 = buf.toString('utf8').trim();
+        if (utf8 && !utf8.includes('\uFFFD') && !/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/.test(utf8)) {
+          if (/=|\/|\+/.test(s) || /^[\p{L}\p{N}\p{P}\p{Zs}\r\n\t]+$/u.test(utf8)) {
+            return utf8;
+          }
+        }
+      }
+    } catch { /* keep raw */ }
+  }
+  return s;
+}
+
+function parseEpgTimestamp(tsField, dateStrField) {
+  const num = Number(tsField);
+  if (Number.isFinite(num) && num > 100000000) {
+    return num > 1e12 ? Math.floor(num / 1000) : Math.floor(num);
+  }
+  if (dateStrField) {
+    const iso = String(dateStrField).trim().replace(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})$/, '$1T$2Z');
+    const ms = Date.parse(iso);
+    if (Number.isFinite(ms)) return Math.floor(ms / 1000);
+  }
+  return 0;
+}
+
+function normalizeShortEpg(rawListings) {
+  if (!Array.isArray(rawListings) || !rawListings.length) return [];
+  const nowSec = Math.floor(Date.now() / 1000);
+  const parsed = [];
+  for (const item of rawListings) {
+    if (!item || typeof item !== 'object') continue;
+    const title = decodeXtreamEpgText(item.title);
+    if (!title) continue;
+    const startTs = parseEpgTimestamp(item.start_timestamp, item.start);
+    const stopTs = parseEpgTimestamp(item.stop_timestamp, item.end || item.stop);
+    if (!startTs || !stopTs || stopTs <= startTs) continue;
+    if (stopTs <= nowSec - 60) continue;
+    const desc = decodeXtreamEpgText(item.description || '').slice(0, 180);
+    parsed.push({ title, desc, startTs, stopTs });
+  }
+  parsed.sort((a, b) => a.startTs - b.startTs);
+  return parsed.slice(0, 2);
+}
 
 function lockedOrigin() {
   return (process.env.XTREAM_SERVER || '').trim().replace(/\/+$/, '');
@@ -693,6 +747,46 @@ module.exports = async function handler(req, res) {
       if (!info) return fail(res, 502, 'Impossible de joindre ce serveur Xtream Codes');
       if (info.status === 'Invalid') return fail(res, 403, 'Identifiants Xtream incorrects (vérifiez utilisateur / mot de passe)', { code: 'INVALID_CREDENTIALS' });
       return sendJSON(res, 200, info);
+    }
+
+    if (action === 'epg') {
+      if (!/^\d{1,12}$/.test(id || '')) return sendJSON(res, 200, { listings: [] });
+      const cacheKey = `${base.origin}|${auth.username}|${id}`;
+      const hit = epgCache.get(cacheKey);
+      if (hit && hit.expiresAt > Date.now()) {
+        return sendJSON(res, 200, { listings: hit.listings });
+      }
+      try {
+        const api = new URL('/player_api.php', base);
+        api.searchParams.set('username', auth.username);
+        api.searchParams.set('password', auth.password);
+        api.searchParams.set('action', 'get_short_epg');
+        api.searchParams.set('stream_id', id);
+        api.searchParams.set('limit', '6');
+        const { response } = await upstreamFetch(api.href, {
+          base,
+          isLocked,
+          signal: requestAbort.signal,
+          connectTimeoutMs: 7000
+        });
+        if (!response.ok) {
+          try { await response.body?.cancel(); } catch { /* ignore */ }
+          return sendJSON(res, 200, { listings: [] });
+        }
+        const text = await response.text();
+        if (text.length > 512 * 1024) return sendJSON(res, 200, { listings: [] });
+        const payload = JSON.parse(text);
+        const rawList = Array.isArray(payload?.epg_listings) ? payload.epg_listings : (Array.isArray(payload) ? payload : []);
+        const listings = normalizeShortEpg(rawList);
+        if (epgCache.size >= MAX_EPG_CACHE) {
+          const oldestKey = epgCache.keys().next().value;
+          if (oldestKey !== undefined) epgCache.delete(oldestKey);
+        }
+        epgCache.set(cacheKey, { listings, expiresAt: Date.now() + EPG_TTL_MS });
+        return sendJSON(res, 200, { listings });
+      } catch {
+        return sendJSON(res, 200, { listings: [] });
+      }
     }
 
     if (action === 'categories' || action === 'streams') {

@@ -1332,6 +1332,8 @@ if (!openedFromQr || hasCredentials()) {
   showWelcomeOnboarding();
 }
 
+const epgClientCache = new Map();
+
 // Pont de lecture seule / délégation pour le module isolé #streampulse-module (zéro modification d'auth)
 window.ONDA_BRIDGE = {
   getState: () => ({
@@ -1346,6 +1348,25 @@ window.ONDA_BRIDGE = {
   buildStreamUrl: (action, streamId) => {
     if (!hasCredentials()) return '';
     return params(action, { id: streamId, ...zappingParam(), _t: Date.now() });
+  },
+  fetchShortEpg: async (streamId) => {
+    const idStr = String(streamId || '').trim();
+    if (!hasCredentials() || !/^\d+$/.test(idStr)) return [];
+    const key = `${catalogueCacheKey()}|${idStr}`;
+    const cached = epgClientCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.listings;
+    try {
+      const data = await requestJSON(params('epg', { id: idStr }));
+      const listings = Array.isArray(data?.listings) ? data.listings : [];
+      if (epgClientCache.size > 200) {
+        const first = epgClientCache.keys().next().value;
+        if (first !== undefined) epgClientCache.delete(first);
+      }
+      epgClientCache.set(key, { listings, expiresAt: Date.now() + 3 * 60 * 1000 });
+      return listings;
+    } catch {
+      return [];
+    }
   },
   parseXtreamText,
   markLocalPlay: () => {

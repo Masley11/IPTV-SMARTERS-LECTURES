@@ -8,6 +8,9 @@ const {
   computeBackoffMs,
   parseM3uPlaylist,
   isSeparatorStream,
+  computeChannelCanonicalKey,
+  extractVariantBadge,
+  rankVariantForFailover,
   StreamPulseController
 } = require('../streampulse/streampulse.js');
 
@@ -171,4 +174,42 @@ test('Unified single interface, 100% SVG (zero stickers/emojis), auto-responsive
   assert.match(apiSource, /zlib\.gzipSync/);
   assert.match(appSource, /onda-catalogue-cache-v1/);
   assert.match(jsSource, /maxBufferLength:\s*this\.ecoMode\s*\?\s*12\s*:\s*16/);
+
+  // 8. Live EPG, Recents, Recall A<->B, Numeric TV Keypad & strict absence of auto-sleep cutoff timer
+  assert.match(jsSource, /sp-recents-v1/);
+  assert.match(jsSource, /data-sp="epgStrip"/);
+  assert.match(jsSource, /data-sp="variantBar"/);
+  assert.match(jsSource, /data-sp="numPadOsd"/);
+  assert.match(jsSource, /data-action="recall-ch"/);
+  assert.equal(/wakeLock|Toujours devant|sleepTimer/i.test(jsSource), false, 'Must NEVER auto-cutoff long viewing sessions');
 });
+
+test('Multi-source canonical channel grouping matches quality/backup variants without homonym collisions', () => {
+  const c4k = computeChannelCanonicalKey('FR| CANAL+ 4K UHD');
+  const cfhd = computeChannelCanonicalKey('FR| CANAL+ FHD');
+  const chd = computeChannelCanonicalKey('FR : CANAL+ HD');
+  const csd = computeChannelCanonicalKey('|FR FHD| CANAL+ SD [BACKUP]');
+  const chevc = computeChannelCanonicalKey('FR| CANAL+ HEVC');
+
+  assert.equal(c4k, 'FR::CANAL PLUS');
+  assert.equal(cfhd, c4k);
+  assert.equal(chd, c4k);
+  assert.equal(csd, c4k);
+  assert.equal(chevc, c4k);
+
+  // Zero false merges on distinct channels, time-shifted (+1), numbered channels, or countries
+  assert.notEqual(computeChannelCanonicalKey('FR| CANAL+ SPORT FHD'), c4k);
+  assert.notEqual(computeChannelCanonicalKey('PL| CANAL+ FHD'), c4k);
+  assert.notEqual(computeChannelCanonicalKey('FR| BEIN SPORTS 1 FHD'), computeChannelCanonicalKey('FR| BEIN SPORTS 2 FHD'));
+  assert.notEqual(computeChannelCanonicalKey('FR| TF1 FHD'), computeChannelCanonicalKey('FR| TF1 +1 FHD'));
+  assert.notEqual(computeChannelCanonicalKey('FR| TF1 FHD'), computeChannelCanonicalKey('CH| TF1 FHD'));
+
+  // Badge extraction & safe failover ordering (HD preferred over HEVC/4K on decode failure)
+  assert.equal(extractVariantBadge('FR| CANAL+ 4K HEVC', 0), '4K HEVC');
+  assert.equal(extractVariantBadge('FR| CANAL+ HD [BACKUP]', 1), 'HD Secours');
+  assert.ok(
+    rankVariantForFailover({ name: 'FR| CANAL+ HD' }, true) <
+    rankVariantForFailover({ name: 'FR| CANAL+ 4K HEVC' }, true)
+  );
+});
+

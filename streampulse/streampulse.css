@@ -274,11 +274,11 @@
   gap: 9px;
 }
 
-/* Primary Tabs: Toutes / Favoris */
+/* Primary Tabs: Direct / Récents / Favoris */
 #streampulse-module .sp-view-tabs {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 4px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 3px;
   padding: 3px;
   background: rgba(255, 255, 255, 0.035);
   border: 1px solid var(--sp-border);
@@ -289,15 +289,19 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 5px;
   height: 32px;
+  padding: 0 6px;
   border: 0;
   border-radius: 7px;
   background: transparent;
   color: var(--sp-muted);
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 600;
   cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   transition: all 0.15s ease;
 }
 
@@ -985,13 +989,186 @@
 
 #streampulse-module .sp-osd-bottom {
   bottom: 0;
-  padding: 28px 20px 16px;
-  background: linear-gradient(0deg, rgba(4, 7, 15, 0.9) 0%, rgba(4, 7, 15, 0) 100%);
+  padding: 26px 20px 16px;
+  background: linear-gradient(0deg, rgba(4, 7, 15, 0.92) 0%, rgba(4, 7, 15, 0.55) 68%, rgba(4, 7, 15, 0) 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+
+#streampulse-module .sp-osd-controls-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+#streampulse-module .sp-osd-meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 11px;
+  background: rgba(9, 13, 25, 0.78);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  backdrop-filter: blur(12px);
+}
+
+/* Mini-EPG Live Program Strip */
+#streampulse-module .sp-epg-strip {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+#streampulse-module .sp-epg-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+#streampulse-module .sp-epg-badge {
+  flex-shrink: 0;
+  padding: 1.5px 6px;
+  border-radius: 4px;
+  background: rgba(34, 211, 238, 0.16);
+  border: 1px solid rgba(34, 211, 238, 0.35);
+  color: #a5f3fc;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+#streampulse-module .sp-epg-time {
+  flex-shrink: 0;
+  font-family: var(--sp-font-mono);
+  font-size: 11px;
+  color: var(--sp-muted);
+}
+
+#streampulse-module .sp-epg-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #f8fafc;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#streampulse-module .sp-epg-progress {
+  width: 100%;
+  max-width: 280px;
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+#streampulse-module .sp-epg-progress i {
+  display: block;
+  height: 100%;
+  width: 0%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--sp-cyan), var(--sp-indigo));
+  transition: width 0.4s ease;
+}
+
+#streampulse-module .sp-epg-next {
+  font-size: 11px;
+  color: var(--sp-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Multi-Source Variant Switcher Pills (FHD / HD / SD / 4K) */
+#streampulse-module .sp-variant-bar {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow-x: auto;
+  max-width: 100%;
+  margin-left: auto;
+}
+
+#streampulse-module .sp-variant-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--sp-muted);
+  margin-right: 3px;
+  white-space: nowrap;
+}
+
+#streampulse-module .sp-variant-pill {
+  flex-shrink: 0;
+  height: 26px;
+  padding: 0 9px;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--sp-text-soft);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.14s ease;
+}
+
+#streampulse-module .sp-variant-pill:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+}
+
+#streampulse-module .sp-variant-pill.sp-active {
+  background: rgba(34, 211, 238, 0.18);
+  border-color: rgba(34, 211, 238, 0.5);
+  color: #a5f3fc;
+}
+
+/* Smart TV Numeric Keypad Zapping OSD (0-9) */
+#streampulse-module .sp-numpad-osd {
+  position: absolute;
+  top: 22px;
+  right: 22px;
+  z-index: 9;
+  min-width: 136px;
+  max-width: 280px;
+  padding: 10px 16px;
+  border-radius: 13px;
+  background: rgba(9, 13, 25, 0.92);
+  border: 1px solid rgba(34, 211, 238, 0.45);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  pointer-events: none;
+}
+
+#streampulse-module .sp-numpad-digits {
+  font-family: var(--sp-font-mono);
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--sp-cyan);
+  line-height: 1.1;
+}
+
+#streampulse-module .sp-numpad-preview {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--sp-text-soft);
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 #streampulse-module.sp-osd-idle .sp-osd-top {
@@ -1091,6 +1268,10 @@
 #streampulse-module .sp-ctrl-btn.sp-active {
   border-color: rgba(34, 211, 238, 0.55);
   color: var(--sp-cyan);
+}
+
+#streampulse-module .sp-ctrl-btn.sp-disabled {
+  opacity: 0.36;
 }
 
 #streampulse-module .sp-ctrl-play {
@@ -1313,7 +1494,35 @@
   }
 
   #streampulse-module .sp-osd-bottom {
-    padding: 18px 12px 10px;
+    padding: 14px 10px 8px;
+    gap: 6px;
+  }
+
+  #streampulse-module .sp-osd-meta-row {
+    padding: 5px 8px;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  #streampulse-module .sp-epg-next,
+  #streampulse-module .sp-variant-label {
+    display: none;
+  }
+
+  #streampulse-module .sp-variant-pill {
+    height: 22px;
+    padding: 0 7px;
+    font-size: 10px;
+  }
+
+  #streampulse-module .sp-numpad-osd {
+    top: 10px;
+    right: 10px;
+    padding: 6px 11px;
+  }
+
+  #streampulse-module .sp-numpad-digits {
+    font-size: 18px;
   }
 
   #streampulse-module .sp-now-name {
@@ -1335,7 +1544,7 @@
     padding-bottom: env(safe-area-inset-bottom, 0px);
     flex-shrink: 0;
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     background: rgba(9, 13, 25, 0.96);
     border-top: 1px solid var(--sp-border);
     z-index: 12;

@@ -49,6 +49,25 @@ test('catalogue, compte 1/1, redirection load-balancer HLS signée, flux MPEG-TS
           }
         }));
       }
+      if (query.get('action') === 'get_short_epg') {
+        const nowSec = Math.floor(Date.now() / 1000);
+        return res.end(JSON.stringify({
+          epg_listings: [
+            {
+              title: Buffer.from('Ligue des Champions : Direct', 'utf8').toString('base64'),
+              description: Buffer.from('Grande soirée européenne', 'utf8').toString('base64'),
+              start_timestamp: String(nowSec - 900),
+              stop_timestamp: String(nowSec + 2700)
+            },
+            {
+              title: Buffer.from('Debrief Sport', 'utf8').toString('base64'),
+              description: '',
+              start_timestamp: String(nowSec + 2700),
+              stop_timestamp: String(nowSec + 5400)
+            }
+          ]
+        }));
+      }
       return res.end(JSON.stringify(query.get('action') === 'get_live_categories' ? [{ category_id: '1', category_name: 'Infos' }] : [{ stream_id: 42, name: 'Info TV' }]));
     }
     if (req.url.endsWith('/99.m3u8')) {
@@ -134,6 +153,15 @@ test('catalogue, compte 1/1, redirection load-balancer HLS signée, flux MPEG-TS
     const tsBuf = Buffer.from(await tsStream.arrayBuffer());
     assert.equal(tsBuf[0], 0x47);
     assert.equal(tsBuf.length, 190);
+
+    // 4b. Short EPG decoding (Base64 UTF-8 -> clean JSON now + next)
+    const epgResp = await fetch(base + '&action=epg&id=42');
+    assert.equal(epgResp.status, 200);
+    const epgJson = await epgResp.json();
+    assert.equal(epgJson.listings.length, 2);
+    assert.equal(epgJson.listings[0].title, 'Ligue des Champions : Direct');
+    assert.equal(epgJson.listings[0].desc, 'Grande soirée européenne');
+    assert.equal(epgJson.listings[1].title, 'Debrief Sport');
 
     // 5. Detection of max_connections: 1 already occupied on another device (429 MAX_CONNECTIONS)
     activeCons = '1';

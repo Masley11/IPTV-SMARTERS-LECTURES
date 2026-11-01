@@ -18,7 +18,11 @@
   const BACKOFF_MAX_MS = 16000;
   const MAX_AUTO_RETRIES = 5;
   const MAX_ZAP_WAIT_MS = 25000;
+  const MAX_VARIANT_FAILOVERS = 2;
+  const MAX_RECENTS = 25;
+  const NUMPAD_COMMIT_MS = 1150;
   const FAV_STORAGE_KEY = 'sp-favorites-v1';
+  const RECENTS_STORAGE_KEY = 'sp-recents-v1';
   const PROTO_STORAGE_KEY = 'sp-protocol-v1';
   const LAST_CH_STORAGE_KEY = 'sp-last-channel-v1';
   const ECO_STORAGE_KEY = 'sp-eco-mode-v1';
@@ -26,6 +30,8 @@
   /* Pure vector SVG icon set — zero emojis or Unicode dingbats */
   const ICONS = {
     tv: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="15" rx="2"/><polyline points="17 2 12 7 7 2"/></svg>',
+    history: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><polyline points="3 3 3 8 8 8"/><polyline points="12 7 12 12 15 14"/></svg>',
+    recall: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 2 21 6 17 10"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 22 3 18 7 14"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>',
     qr: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3zM20 14v3M14 20h7"/></svg>',
     settings: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>',
     star: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>',
@@ -143,8 +149,80 @@
     if (/\b(4K|UHD|2160P)\b/.test(s)) return '4K';
     if (/\b(FHD|1080P)\b/.test(s)) return 'FHD';
     if (/\b(HD|720P)\b/.test(s)) return 'HD';
+    if (/\bSD\b/.test(s)) return 'SD';
     if (/\bHEVC\b/.test(s)) return 'HEVC';
     return '';
+  }
+
+  /**
+   * Strict canonical channel identity for multi-source grouping (FHD / HD / SD / 4K / Backup).
+   * Preserves country code, '+' ('PLUS'), and channel numbers so Canal+ never merges with Canal+ Sport
+   * and BeIN Sports 1 never merges with BeIN Sports 2.
+   */
+  function computeChannelCanonicalKey(name) {
+    const raw = String(name || '').trim();
+    if (!raw || isSeparatorStream(raw)) return '';
+    let s = raw.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
+
+    let prefix = '';
+    const pipeMatch = s.match(/^\|([A-Z0-9\s.-]{2,12})\|\s*(.+)$/)
+      || s.match(/^\[([A-Z0-9\s.-]{2,12})\]\s*(.+)$/)
+      || s.match(/^([A-Z]{2,4}(?:\s+(?:VIP|UHD|4K|FHD|HD|SD|HEVC|RAW))?)\s*[:|]\s*(.+)$/)
+      || s.match(/^([A-Z]{2,3})\s+-\s+(.+)$/);
+
+    if (pipeMatch) {
+      prefix = pipeMatch[1]
+        .replace(/\b(?:VIP|UHD|4K|8K|FHD|HD|SD|LQ|HEVC|H\.?265|RAW)\b/g, '')
+        .replace(/[^A-Z0-9]/g, '')
+        .trim();
+      s = pipeMatch[2];
+    }
+
+    s = s
+      .replace(/\+/g, ' PLUS ')
+      .replace(/[\[(]\s*(?:8K|4K|UHD|2160P|FHD|FULL\s*HD|1080P|1080I|HD|720P|SD|576P|480P|LQ|LOW|HEVC|H\.?265|H\.?264|AVC|RAW|VIP|50\s*FPS|60\s*FPS|BACKUP|BCK|BKP|BK|ALT|SEC|MULTI|SOURCE\s*\d+|SRV\s*\d+|S[1-4])[\s./-]*[\])]/g, ' ')
+      .replace(/\b(?:8K|4K|UHD|2160P|FHD|FULL\s*HD|1080P|1080I|HD|720P|SD|576P|480P|LQ|LOW|HEVC|H\.?265|H\.?264|AVC|RAW|VIP|50\s*FPS|60\s*FPS|BACKUP|BCK|BKP|BK|ALT|SEC|SOURCE\s*\d+|SRV\s*\d+|S[1-4])\b/g, ' ')
+      .replace(/[^A-Z0-9]+/g, ' ')
+      .trim()
+      .replace(/\s+/g, ' ');
+
+    if (s.length < 2) return '';
+    return `${prefix}::${s}`;
+  }
+
+  function extractVariantBadge(name, idx = 0) {
+    const s = String(name || '').toUpperCase();
+    const parts = [];
+    if (/\b8K\b/.test(s)) parts.push('8K');
+    else if (/\b(4K|UHD|2160P)\b/.test(s)) parts.push('4K');
+    else if (/\b(FHD|FULL\s*HD|1080P|1080I)\b/.test(s)) parts.push('FHD');
+    else if (/\b(HD|720P)\b/.test(s)) parts.push('HD');
+    else if (/\b(SD|576P|480P|LQ|LOW)\b/.test(s)) parts.push('SD');
+
+    if (/\b(HEVC|H\.?265)\b/.test(s)) parts.push('HEVC');
+    if (/\b(BACKUP|BCK|BKP|BK|ALT|SEC|S2|SOURCE\s*2)\b/.test(s)) parts.push('Secours');
+
+    return parts.length ? parts.join(' ') : `Source ${idx + 1}`;
+  }
+
+  function rankVariantForFailover(channel, avoidHighCodec = false) {
+    const s = String(channel?.name || '').toUpperCase();
+    const isHeavy = /\b(8K|4K|UHD|2160P|HEVC|H\.?265|RAW)\b/.test(s);
+    if (avoidHighCodec && isHeavy) return 60;
+    if (/\b(HD|720P)\b/.test(s) && !isHeavy) return 10;
+    if (/\b(SD|576P|480P)\b/.test(s)) return 18;
+    if (/\b(FHD|FULL\s*HD|1080P)\b/.test(s) && !isHeavy) return 22;
+    if (/\b(BACKUP|BCK|BKP|BK|ALT|SEC)\b/.test(s)) return 26;
+    return isHeavy ? 42 : 30;
+  }
+
+  function formatEpgClock(tsSeconds) {
+    if (!tsSeconds) return '';
+    try {
+      return new Date(tsSeconds * 1000).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+    } catch {
+      return '';
+    }
   }
 
   function channelInitials(name) {
@@ -172,9 +250,13 @@
       this.categoryMap = new Map();
       this.categoryCounts = new Map();
       this.streams = [];
+      this.indexedStreamsRef = null;
+      this.streamById = new Map();
+      this.variantGroups = new Map();
       this.customStreams = null;
       this.filtered = [];
       this.favorites = this.readFavorites();
+      this.recents = this.readRecents();
       this.protocol = this.readProtocol(); // 'auto' | 'hls' | 'ts'
       this.ecoMode = this.readEcoMode(); // Caps bandwidth/resolution to save Fast Origin Transfer
       this.lastSavedChannelId = this.readLastChannelId();
@@ -184,9 +266,20 @@
       this.hasCreds = false;
 
       this.currentChannel = null;
+      this.previousChannelId = '';
       this.currentIndex = -1;
       this.focusedVirtualIndex = 0;
       this.userMuted = false;
+
+      // Multi-source failover & Live EPG state
+      this.triedVariantIds = new Set();
+      this.autoFailoverCount = 0;
+      this.activeEpg = null;
+      this.lastEpgTickTs = 0;
+
+      // Smart TV Numeric Keypad (0-9) OSD state
+      this.numPadBuffer = '';
+      this.numPadTimer = null;
 
       // Active media engines
       this.hls = null;
@@ -237,6 +330,28 @@
       try {
         localStorage.setItem(FAV_STORAGE_KEY, JSON.stringify([...this.favorites]));
       } catch { /* ignore */ }
+    }
+
+    readRecents() {
+      try {
+        const arr = JSON.parse(localStorage.getItem(RECENTS_STORAGE_KEY) || '[]');
+        return Array.isArray(arr) ? arr.map(String).slice(0, MAX_RECENTS) : [];
+      } catch {
+        return [];
+      }
+    }
+
+    recordRecentChannel(streamId) {
+      const idStr = String(streamId || '').trim();
+      if (!idStr) return;
+      this.recents = [idStr, ...this.recents.filter((x) => x !== idStr)].slice(0, MAX_RECENTS);
+      try {
+        localStorage.setItem(RECENTS_STORAGE_KEY, JSON.stringify(this.recents));
+      } catch { /* ignore */ }
+      this.updateTabCounts();
+      if (this.activeTab === 'recents') {
+        this.recomputeFiltered();
+      }
     }
 
     readProtocol() {
@@ -338,7 +453,11 @@
             <div class="sp-view-tabs" role="tablist">
               <button type="button" class="sp-view-tab sp-active sp-focusable" data-action="tab-live" data-sp="tabLive">
                 ${ICONS.tv}
-                <span>Toutes les chaînes</span>
+                <span>Direct</span>
+              </button>
+              <button type="button" class="sp-view-tab sp-focusable" data-action="tab-recents" data-sp="tabRecents">
+                ${ICONS.history}
+                <span data-sp="recentsTabCount">Récents</span>
               </button>
               <button type="button" class="sp-view-tab sp-focusable" data-action="tab-favs" data-sp="tabFavs">
                 ${ICONS.star}
@@ -434,6 +553,12 @@
           <!-- Toast discret -->
           <div class="sp-toast" data-sp="toast"></div>
 
+          <!-- Bandeau Zapping Numérique TV (0-9) -->
+          <div class="sp-numpad-osd sp-hidden" data-sp="numPadOsd" aria-live="polite">
+            <span class="sp-numpad-digits" data-sp="numPadDigits">--</span>
+            <span class="sp-numpad-preview" data-sp="numPadPreview">Chaîne</span>
+          </div>
+
           <!-- Contrôles Supérieurs (auto-masqués en lecture) -->
           <div class="sp-osd-top sp-hidden" data-sp="osdTop">
             <div class="sp-now-playing">
@@ -457,41 +582,60 @@
             </div>
           </div>
 
-          <!-- Contrôles Inférieurs (auto-masqués en lecture) -->
+          <!-- Contrôles Inférieurs (Programme TV + Variantes Multi-Sources + Commandes) -->
           <div class="sp-osd-bottom sp-hidden" data-sp="osdBottom">
-            <div class="sp-ctrl-cluster">
-              <button type="button" class="sp-ctrl-btn sp-focusable" data-action="prev-ch" title="Chaîne précédente">
-                ${ICONS.prev}
-              </button>
-              <button type="button" class="sp-ctrl-play sp-focusable" data-action="play-pause" data-sp="playBtn" title="Lecture / Pause">
-                ${ICONS.pause}
-              </button>
-              <button type="button" class="sp-ctrl-btn sp-focusable" data-action="next-ch" title="Chaîne suivante">
-                ${ICONS.next}
-              </button>
-
-              <div class="sp-vol-wrap">
-                <button type="button" class="sp-ctrl-btn sp-focusable" data-action="mute" data-sp="muteBtn" title="Activer / couper le son">
-                  ${ICONS.volume}
-                </button>
-                <input type="range" min="0" max="100" value="95" class="sp-vol-slider" data-sp="volRange" aria-label="Volume">
+            <div class="sp-osd-meta-row sp-hidden" data-sp="osdMetaRow">
+              <div class="sp-epg-strip sp-hidden" data-sp="epgStrip">
+                <div class="sp-epg-line">
+                  <span class="sp-epg-badge">EN COURS</span>
+                  <span class="sp-epg-time" data-sp="epgTime"></span>
+                  <strong class="sp-epg-title" data-sp="epgTitle"></strong>
+                </div>
+                <div class="sp-epg-progress"><i data-sp="epgFill"></i></div>
+                <div class="sp-epg-next sp-hidden" data-sp="epgNext"></div>
               </div>
+
+              <div class="sp-variant-bar sp-no-scrollbar sp-hidden" data-sp="variantBar" role="group" aria-label="Variantes de la chaîne"></div>
             </div>
 
-            <div class="sp-ctrl-cluster">
-              <div class="sp-proto-group" role="group" aria-label="Format de réception">
-                <button type="button" class="sp-proto-btn sp-focusable" data-proto="auto">Auto</button>
-                <button type="button" class="sp-proto-btn sp-focusable" data-proto="hls">HLS</button>
-                <button type="button" class="sp-proto-btn sp-focusable" data-proto="ts">MPEG-TS</button>
+            <div class="sp-osd-controls-row">
+              <div class="sp-ctrl-cluster">
+                <button type="button" class="sp-ctrl-btn sp-focusable" data-action="prev-ch" title="Chaîne précédente">
+                  ${ICONS.prev}
+                </button>
+                <button type="button" class="sp-ctrl-play sp-focusable" data-action="play-pause" data-sp="playBtn" title="Lecture / Pause">
+                  ${ICONS.pause}
+                </button>
+                <button type="button" class="sp-ctrl-btn sp-focusable" data-action="next-ch" title="Chaîne suivante">
+                  ${ICONS.next}
+                </button>
+                <button type="button" class="sp-ctrl-btn sp-focusable sp-disabled" data-action="recall-ch" data-sp="recallBtn" title="Retourner à la dernière chaîne regardée (R)">
+                  ${ICONS.recall}
+                </button>
+
+                <div class="sp-vol-wrap">
+                  <button type="button" class="sp-ctrl-btn sp-focusable" data-action="mute" data-sp="muteBtn" title="Activer / couper le son">
+                    ${ICONS.volume}
+                  </button>
+                  <input type="range" min="0" max="100" value="95" class="sp-vol-slider" data-sp="volRange" aria-label="Volume">
+                </div>
               </div>
 
-              <button type="button" class="sp-ctrl-pill sp-focusable" data-action="cycle-abr" data-sp="abrBtn" title="Sélectionner la qualité vidéo">
-                ABR Auto
-              </button>
+              <div class="sp-ctrl-cluster">
+                <div class="sp-proto-group" role="group" aria-label="Format de réception">
+                  <button type="button" class="sp-proto-btn sp-focusable" data-proto="auto">Auto</button>
+                  <button type="button" class="sp-proto-btn sp-focusable" data-proto="hls">HLS</button>
+                  <button type="button" class="sp-proto-btn sp-focusable" data-proto="ts">MPEG-TS</button>
+                </div>
 
-              <button type="button" class="sp-ctrl-btn sp-focusable" data-action="fullscreen" title="Plein écran">
-                ${ICONS.maximize}
-              </button>
+                <button type="button" class="sp-ctrl-pill sp-focusable" data-action="cycle-abr" data-sp="abrBtn" title="Sélectionner la qualité vidéo">
+                  ABR Auto
+                </button>
+
+                <button type="button" class="sp-ctrl-btn sp-focusable" data-action="fullscreen" title="Plein écran">
+                  ${ICONS.maximize}
+                </button>
+              </div>
             </div>
           </div>
         </main>
@@ -502,6 +646,10 @@
         <button type="button" class="sp-mobile-tab sp-active" data-action="tab-live" data-sp="mobLive">
           ${ICONS.tv}
           <span>Direct</span>
+        </button>
+        <button type="button" class="sp-mobile-tab" data-action="tab-recents" data-sp="mobRecents">
+          ${ICONS.history}
+          <span>Récents</span>
         </button>
         <button type="button" class="sp-mobile-tab" data-action="tab-favs" data-sp="mobFavs">
           ${ICONS.star}
@@ -542,7 +690,9 @@
           </div>
           <div class="sp-kbd-row"><span>Parcourir la liste des chaînes</span><kbd>Flèches Haut / Bas</kbd></div>
           <div class="sp-kbd-row"><span>Lancer la chaîne sélectionnée</span><kbd>Entrée / OK</kbd></div>
+          <div class="sp-kbd-row"><span>Accès direct par numéro TV</span><kbd>Touches 0 – 9</kbd></div>
           <div class="sp-kbd-row"><span>Zapping chaîne précédente / suivante</span><kbd>Flèches Gauche / Droite</kbd></div>
+          <div class="sp-kbd-row"><span>Alterner avec la dernière chaîne vue</span><kbd>R / Retour</kbd></div>
           <div class="sp-kbd-row"><span>Lecture / Pause</span><kbd>Espace</kbd></div>
           <div class="sp-kbd-row"><span>Mode cinéma (masquer la liste)</span><kbd>T</kbd></div>
           <div class="sp-kbd-row"><span>Plein écran</span><kbd>F</kbd></div>
@@ -568,6 +718,16 @@
         const protoBtn = ev.target.closest('[data-proto]');
         if (protoBtn) {
           this.saveProtocol(protoBtn.getAttribute('data-proto'));
+          return;
+        }
+        const variantBtn = ev.target.closest('[data-variant-id]');
+        if (variantBtn) {
+          const vid = String(variantBtn.getAttribute('data-variant-id') || '');
+          const targetCh = this.streamById.get(vid);
+          if (targetCh && (!this.currentChannel || String(this.currentChannel.stream_id) !== vid)) {
+            const idx = this.filtered.findIndex((c) => String(c.stream_id) === vid);
+            this.playChannel(targetCh, idx, { isManualVariantSwitch: true });
+          }
           return;
         }
         const actionEl = ev.target.closest('[data-action]');
@@ -739,8 +899,14 @@
         case 'tab-live':
           this.setTab('live');
           break;
+        case 'tab-recents':
+          this.setTab('recents');
+          break;
         case 'tab-favs':
           this.setTab('favs');
+          break;
+        case 'recall-ch':
+          this.recallPreviousChannel();
           break;
         case 'clear-search':
           this.q('[data-sp="searchInput"]').value = '';
@@ -826,12 +992,16 @@
     }
 
     setTab(tab) {
-      this.activeTab = tab === 'favs' ? 'favs' : 'live';
+      this.activeTab = ['live', 'recents', 'favs'].includes(tab) ? tab : 'live';
+      const isLive = this.activeTab === 'live';
+      const isRecents = this.activeTab === 'recents';
       const isFavs = this.activeTab === 'favs';
-      this.q('[data-sp="tabLive"]').classList.toggle('sp-active', !isFavs);
-      this.q('[data-sp="tabFavs"]').classList.toggle('sp-active', isFavs);
-      this.q('[data-sp="mobLive"]').classList.toggle('sp-active', !isFavs);
-      this.q('[data-sp="mobFavs"]').classList.toggle('sp-active', isFavs);
+      this.q('[data-sp="tabLive"]')?.classList.toggle('sp-active', isLive);
+      this.q('[data-sp="tabRecents"]')?.classList.toggle('sp-active', isRecents);
+      this.q('[data-sp="tabFavs"]')?.classList.toggle('sp-active', isFavs);
+      this.q('[data-sp="mobLive"]')?.classList.toggle('sp-active', isLive);
+      this.q('[data-sp="mobRecents"]')?.classList.toggle('sp-active', isRecents);
+      this.q('[data-sp="mobFavs"]')?.classList.toggle('sp-active', isFavs);
       this.isBouquetDrawerOpen = false;
       this.q('[data-sp="bouquetDrawer"]').classList.add('sp-hidden');
       this.q('[data-sp="channelsViewport"]').classList.remove('sp-hidden');
@@ -926,16 +1096,92 @@
         this.showToast('Ajouté aux favoris');
       }
       this.saveFavorites();
-      this.updateFavCounts();
+      this.updateTabCounts();
       this.updateCurrentFavButton();
       if (this.activeTab === 'favs') this.recomputeFiltered();
       else this.renderVirtualChannels();
     }
 
-    updateFavCounts() {
-      const n = this.favorites.size;
-      const el = this.q('[data-sp="favTabCount"]');
-      if (el) el.textContent = n > 0 ? `Favoris (${n})` : 'Favoris';
+    updateTabCounts() {
+      const favCount = this.favorites.size;
+      const favEl = this.q('[data-sp="favTabCount"]');
+      if (favEl) favEl.textContent = favCount > 0 ? `Favoris (${favCount})` : 'Favoris';
+
+      const validRecents = this.streamById.size
+        ? this.recents.filter((id) => this.streamById.has(String(id))).length
+        : this.recents.length;
+      const recEl = this.q('[data-sp="recentsTabCount"]');
+      if (recEl) recEl.textContent = validRecents > 0 ? `Récents (${validRecents})` : 'Récents';
+    }
+
+    rebuildStreamIndexes() {
+      if (this.indexedStreamsRef === this.streams) return;
+      this.indexedStreamsRef = this.streams;
+      this.streamById = new Map();
+      const rawGroups = new Map();
+
+      for (let i = 0; i < this.streams.length; i++) {
+        const s = this.streams[i];
+        if (!s || s.stream_id == null) continue;
+        const idStr = String(s.stream_id);
+        this.streamById.set(idStr, s);
+        const key = computeChannelCanonicalKey(s.name);
+        if (!key) continue;
+        s._canonKey = key;
+        let bucket = rawGroups.get(key);
+        if (!bucket) {
+          bucket = [];
+          rawGroups.set(key, bucket);
+        }
+        if (bucket.length < 8 && !bucket.some((x) => String(x.stream_id) === idStr)) {
+          bucket.push(s);
+        }
+      }
+
+      this.variantGroups = new Map();
+      for (const [key, list] of rawGroups) {
+        if (list.length >= 2 && list.length <= 8) {
+          this.variantGroups.set(key, list);
+        }
+      }
+
+      // Seed previousChannelId from recents history if not yet set in session
+      if (!this.previousChannelId && this.recents.length >= 2) {
+        const alt = this.recents.find((id) => id !== String(this.currentChannel?.stream_id || this.lastSavedChannelId) && this.streamById.has(id));
+        if (alt) this.previousChannelId = alt;
+      }
+      this.updateRecallButton();
+    }
+
+    getChannelVariants(channel) {
+      if (!channel) return [];
+      const key = channel._canonKey || computeChannelCanonicalKey(channel.name);
+      if (!key) return [];
+      return this.variantGroups.get(key) || [];
+    }
+
+    updateRecallButton() {
+      const btn = this.q('[data-sp="recallBtn"]');
+      if (!btn) return;
+      const prevCh = this.previousChannelId ? this.streamById.get(String(this.previousChannelId)) : null;
+      const canRecall = Boolean(prevCh && (!this.currentChannel || String(prevCh.stream_id) !== String(this.currentChannel.stream_id)));
+      btn.classList.toggle('sp-disabled', !canRecall);
+      if (canRecall) {
+        btn.title = `Retourner sur ${prevCh.name} (R)`;
+      } else {
+        btn.title = 'Retourner à la dernière chaîne regardée (R)';
+      }
+    }
+
+    recallPreviousChannel() {
+      const prevCh = this.previousChannelId ? this.streamById.get(String(this.previousChannelId)) : null;
+      if (!prevCh || (this.currentChannel && String(prevCh.stream_id) === String(this.currentChannel.stream_id))) {
+        this.showToast('Aucune chaîne précédente enregistrée');
+        return;
+      }
+      const idx = this.filtered.findIndex((c) => String(c.stream_id) === String(prevCh.stream_id));
+      if (idx >= 0) this.scrollChannelIntoView(idx);
+      this.playChannel(prevCh, idx);
     }
 
     syncFromBridge() {
@@ -952,6 +1198,7 @@
           this.categories = Array.isArray(snap.categories) ? snap.categories : [];
           this.streams = Array.isArray(snap.streams) ? snap.streams : [];
         }
+        this.rebuildStreamIndexes();
         this.categoryMap = new Map(this.categories.map((c) => [String(c.category_id), c.category_name || 'En direct']));
         this.categoryCounts = new Map();
         for (const s of this.streams) {
@@ -983,7 +1230,7 @@
         }
       }
 
-      this.updateFavCounts();
+      this.updateTabCounts();
       this.updateBouquetTriggerLabel();
       this.renderCategoryChips();
       this.recomputeFiltered();
@@ -1070,17 +1317,30 @@
     recomputeFiltered() {
       const q = this.searchQuery;
       const onlyFavs = this.activeTab === 'favs';
+      const onlyRecents = this.activeTab === 'recents';
       const cat = this.selectedCat;
 
-      this.filtered = this.streams.filter((item) => {
-        if (onlyFavs && !this.favorites.has(String(item.stream_id))) return false;
-        if (cat !== 'all' && String(item.category_id) !== cat) return false;
-        if (q) {
-          if (isSeparatorStream(item.name)) return false;
-          if (!String(item.name || '').toLocaleLowerCase().includes(q)) return false;
+      if (onlyRecents) {
+        const list = [];
+        for (const id of this.recents) {
+          const item = this.streamById.get(String(id));
+          if (!item || isSeparatorStream(item.name)) continue;
+          if (cat !== 'all' && String(item.category_id) !== cat) continue;
+          if (q && !String(item.name || '').toLocaleLowerCase().includes(q)) continue;
+          list.push(item);
         }
-        return true;
-      });
+        this.filtered = list;
+      } else {
+        this.filtered = this.streams.filter((item) => {
+          if (onlyFavs && !this.favorites.has(String(item.stream_id))) return false;
+          if (cat !== 'all' && String(item.category_id) !== cat) return false;
+          if (q) {
+            if (isSeparatorStream(item.name)) return false;
+            if (!String(item.name || '').toLocaleLowerCase().includes(q)) return false;
+          }
+          return true;
+        });
+      }
 
       if (this.currentChannel) {
         this.currentIndex = this.filtered.findIndex((c) => String(c.stream_id) === String(this.currentChannel.stream_id));
@@ -1105,6 +1365,11 @@
           listState.innerHTML = `
             <strong style="color:#fff">Aucune playlist connectée</strong>
             <span>Scannez un QR Code TV ou ajoutez votre lien Xtream / M3U pour afficher vos chaînes ici.</span>
+          `;
+        } else if (onlyRecents) {
+          listState.innerHTML = `
+            <strong style="color:#fff">Aucune chaîne récente</strong>
+            <span>Les dernières chaînes que vous regardez s’afficheront automatiquement ici.</span>
           `;
         } else if (onlyFavs) {
           listState.innerHTML = `
@@ -1296,14 +1561,33 @@
       }
     }
 
-    playChannel(channel, idx = -1) {
+    playChannel(channel, idx = -1, opts = {}) {
       if (!channel || isSeparatorStream(channel.name)) return;
       rootGlobal.ONDA_BRIDGE?.stopRootPlayback?.();
+
+      const isAutoFailover = Boolean(opts && opts.isAutoFailover);
+      const isManualVariantSwitch = Boolean(opts && opts.isManualVariantSwitch);
+      const nextIdStr = String(channel.stream_id);
+
+      if (this.currentChannel && !isAutoFailover && !isManualVariantSwitch) {
+        const prevIdStr = String(this.currentChannel.stream_id);
+        if (prevIdStr !== nextIdStr) {
+          this.previousChannelId = prevIdStr;
+        }
+      }
+
+      if (!isAutoFailover) {
+        this.triedVariantIds = new Set([nextIdStr]);
+        this.autoFailoverCount = 0;
+      } else {
+        this.triedVariantIds.add(nextIdStr);
+      }
 
       this.destroyPlayer();
       const token = this.sessionToken;
       this.currentChannel = channel;
-      this.currentIndex = idx >= 0 ? idx : this.filtered.findIndex((c) => String(c.stream_id) === String(channel.stream_id));
+      this.recordRecentChannel(channel.stream_id);
+      this.currentIndex = idx >= 0 ? idx : this.filtered.findIndex((c) => String(c.stream_id) === nextIdStr);
       if (this.currentIndex >= 0) this.focusedVirtualIndex = this.currentIndex;
 
       this.saveLastChannelId(channel.stream_id);
@@ -1327,10 +1611,13 @@
       this.q('[data-sp="osdCat"]').textContent = catName;
       this.q('[data-sp="abrBtn"]').textContent = this.ecoMode ? 'Éco Données' : 'ABR Auto';
       this.updateCurrentFavButton();
+      this.updateRecallButton();
+      this.renderVariantBar(channel);
+      this.loadChannelEpg(channel, token);
       this.renderVirtualChannels();
       this.wakeOsd();
       this.setStreamAlert('');
-      this.setBuffering(true, 'Connexion au direct...');
+      this.setBuffering(true, isAutoFailover ? `Ouverture de la source de secours...` : 'Connexion au direct...');
 
       // Prime <video> synchronously inside user gesture
       const video = this.q('[data-sp="video"]');
@@ -1351,6 +1638,155 @@
         this.startMpegTs(channel, token, false);
       } else {
         this.startAdaptiveHls(channel, token, this.protocol === 'auto');
+      }
+    }
+
+    syncOsdMetaVisibility() {
+      const metaRow = this.q('[data-sp="osdMetaRow"]');
+      const epgStrip = this.q('[data-sp="epgStrip"]');
+      const variantBar = this.q('[data-sp="variantBar"]');
+      if (!metaRow) return;
+      const hasEpg = epgStrip && !epgStrip.classList.contains('sp-hidden');
+      const hasVariants = variantBar && !variantBar.classList.contains('sp-hidden');
+      metaRow.classList.toggle('sp-hidden', !hasEpg && !hasVariants);
+    }
+
+    renderVariantBar(channel) {
+      const bar = this.q('[data-sp="variantBar"]');
+      if (!bar) return;
+      const variants = this.getChannelVariants(channel);
+      if (variants.length <= 1) {
+        bar.classList.add('sp-hidden');
+        bar.innerHTML = '';
+        this.syncOsdMetaVisibility();
+        return;
+      }
+
+      const activeId = String(channel.stream_id);
+      const labelCounts = new Map();
+      const pills = variants.map((v, i) => {
+        const baseBadge = extractVariantBadge(v.name, i);
+        const seen = (labelCounts.get(baseBadge) || 0) + 1;
+        labelCounts.set(baseBadge, seen);
+        const label = seen > 1 ? `${baseBadge} ${seen}` : baseBadge;
+        const vid = String(v.stream_id);
+        const isCurrent = vid === activeId;
+        return `<button type="button" class="sp-variant-pill sp-focusable ${isCurrent ? 'sp-active' : ''}" data-variant-id="${escapeHtml(vid)}" title="${escapeHtml(v.name)}">${escapeHtml(label)}</button>`;
+      });
+
+      bar.innerHTML = `<span class="sp-variant-label">Sources</span>${pills.join('')}`;
+      bar.classList.remove('sp-hidden');
+      this.syncOsdMetaVisibility();
+    }
+
+    /**
+     * Multi-Source Smart Failover: safely releases the current 1-connection slot (1.3s pause)
+     * before switching to the most reliable sibling variant (HD -> SD -> FHD -> Backup).
+     */
+    tryNextVariantFailover(token, avoidHighCodec = false) {
+      if (token !== this.sessionToken || !this.currentChannel) return false;
+      if (this.autoFailoverCount >= MAX_VARIANT_FAILOVERS) return false;
+
+      const variants = this.getChannelVariants(this.currentChannel);
+      if (variants.length <= 1) return false;
+
+      const candidates = variants
+        .filter((v) => !this.triedVariantIds.has(String(v.stream_id)))
+        .sort((a, b) => rankVariantForFailover(a, avoidHighCodec) - rankVariantForFailover(b, avoidHighCodec));
+
+      if (!candidates.length) return false;
+
+      const nextVariant = candidates[0];
+      const badge = extractVariantBadge(nextVariant.name, variants.indexOf(nextVariant));
+      this.autoFailoverCount++;
+      this.triedVariantIds.add(String(nextVariant.stream_id));
+
+      this.destroyPlayer();
+      const waitToken = this.sessionToken;
+      this.setStreamAlert('');
+      this.setBuffering(true, `Source indisponible · Bascule auto vers ${badge}...`);
+      this.showToast(`Bascule auto vers ${badge}`);
+
+      this.retryTimer = setTimeout(() => {
+        this.retryTimer = null;
+        if (waitToken !== this.sessionToken) return;
+        const nextIdx = this.filtered.findIndex((c) => String(c.stream_id) === String(nextVariant.stream_id));
+        this.playChannel(nextVariant, nextIdx, { isAutoFailover: true });
+      }, 1300);
+
+      return true;
+    }
+
+    async loadChannelEpg(channel, token) {
+      this.activeEpg = null;
+      const strip = this.q('[data-sp="epgStrip"]');
+      if (strip) strip.classList.add('sp-hidden');
+      this.syncOsdMetaVisibility();
+
+      if (!channel || channel.directUrl) return;
+      const bridge = rootGlobal.ONDA_BRIDGE;
+      if (!bridge || typeof bridge.fetchShortEpg !== 'function') return;
+
+      const listings = await bridge.fetchShortEpg(channel.stream_id);
+      if (token !== this.sessionToken || !Array.isArray(listings) || !listings.length) return;
+
+      const nowSec = Math.floor(Date.now() / 1000);
+      let current = listings.find((it) => it.startTs <= nowSec + 120 && it.stopTs > nowSec);
+      let next = null;
+      if (current) {
+        next = listings.find((it) => it !== current && it.startTs >= current.stopTs - 60);
+      } else {
+        current = listings[0];
+        next = listings[1] || null;
+      }
+      if (!current || !current.title) return;
+
+      this.activeEpg = { channelId: String(channel.stream_id), current, next, refreshedAtStop: false };
+      this.renderActiveEpgDom();
+    }
+
+    renderActiveEpgDom() {
+      const strip = this.q('[data-sp="epgStrip"]');
+      if (!strip || !this.activeEpg || !this.activeEpg.current) {
+        if (strip) strip.classList.add('sp-hidden');
+        this.syncOsdMetaVisibility();
+        return;
+      }
+
+      const { current, next } = this.activeEpg;
+      const timeRange = `${formatEpgClock(current.startTs)} – ${formatEpgClock(current.stopTs)}`;
+      this.q('[data-sp="epgTime"]').textContent = timeRange;
+      this.q('[data-sp="epgTitle"]').textContent = current.title;
+
+      const nextEl = this.q('[data-sp="epgNext"]');
+      if (next && next.title) {
+        const nextClock = formatEpgClock(next.startTs);
+        nextEl.textContent = `À suivre · ${nextClock ? nextClock + ' ' : ''}${next.title}`;
+        nextEl.classList.remove('sp-hidden');
+      } else {
+        nextEl.textContent = '';
+        nextEl.classList.add('sp-hidden');
+      }
+
+      this.updateEpgProgressDom();
+      strip.classList.remove('sp-hidden');
+      this.syncOsdMetaVisibility();
+    }
+
+    updateEpgProgressDom() {
+      if (!this.activeEpg || !this.activeEpg.current) return;
+      const fill = this.q('[data-sp="epgFill"]');
+      if (!fill) return;
+      const nowSec = Math.floor(Date.now() / 1000);
+      const { startTs, stopTs } = this.activeEpg.current;
+      const dur = Math.max(1, stopTs - startTs);
+      const pct = Math.max(0, Math.min(100, ((nowSec - startTs) / dur) * 100));
+      fill.style.width = `${pct.toFixed(1)}%`;
+
+      // Automatically refresh EPG once when the current program ends
+      if (nowSec >= stopTs && !this.activeEpg.refreshedAtStop && this.currentChannel) {
+        this.activeEpg.refreshedAtStop = true;
+        this.loadChannelEpg(this.currentChannel, this.sessionToken);
       }
     }
 
@@ -1466,9 +1902,12 @@
 
           const httpCode = data.response && data.response.code;
 
-          // Recover fatal media decode errors seamlessly
+          // Recover fatal media decode errors seamlessly (or hop to HD/SD sibling if codec like HEVC is unsupported)
           if (manifestReady && data.type === HlsClass.ErrorTypes.MEDIA_ERROR) {
             this.mediaRecoveryCount++;
+            if (this.mediaRecoveryCount >= 3 && this.tryNextVariantFailover(token, true)) {
+              return;
+            }
             if (this.mediaRecoveryCount === 2 && typeof hls.swapAudioCodec === 'function') {
               hls.swapAudioCodec();
             }
@@ -1513,6 +1952,11 @@
             this.destroyPlayer();
             this.setBuffering(false);
             this.setStreamAlert('Accès refusé par le fournisseur IPTV (abonnement expiré ou identifiants invalides).', true);
+            return;
+          }
+
+          // After 1 fast retry on a dead source, immediately fail over to an HD/SD sibling variant if available
+          if (!manifestReady && this.retryAttempt >= 1 && this.tryNextVariantFailover(token, false)) {
             return;
           }
 
@@ -1680,13 +2124,16 @@
           this.setStreamAlert('Identifiants refusés ou abonnement expiré.', true);
           return;
         }
+        if (!hasPlayed && this.retryAttempt >= 1 && this.tryNextVariantFailover(token, false)) {
+          return;
+        }
         if (hasPlayed || this.retryAttempt < 3) {
           this.scheduleExponentialRecovery(token, () => {
             this.destroyPlayer();
             this.sessionToken = token;
             this.startMpegTs(channel, token, fromAutoFallback);
           }, true);
-        } else {
+        } else if (!this.tryNextVariantFailover(token, false)) {
           this.setBuffering(false);
           this.setStreamAlert('Cette chaîne est actuellement hors antenne chez le fournisseur.', true);
         }
@@ -1705,6 +2152,7 @@
       if (this.retryTimer) clearTimeout(this.retryTimer);
 
       if (this.retryAttempt >= MAX_AUTO_RETRIES) {
+        if (this.tryNextVariantFailover(token, false)) return;
         this.setBuffering(false);
         this.setStreamAlert('Cette chaîne semble hors antenne ou indisponible chez votre fournisseur (essayez une autre chaîne ou le mode MPEG-TS).', true);
         return;
@@ -1775,6 +2223,11 @@
         if (now - this.lastTelemetryCommitTs >= 300) {
           this.lastTelemetryCommitTs = now;
           if (this.isStatsOpen) this.commitTelemetryDom();
+        }
+
+        if (this.activeEpg && now - this.lastEpgTickTs >= 2000) {
+          this.lastEpgTickTs = now;
+          this.updateEpgProgressDom();
         }
 
         this.rafId = requestAnimationFrame(tick);
@@ -1962,6 +2415,7 @@
       }
       this.customStreams = parsed;
       this.streams = parsed;
+      this.rebuildStreamIndexes();
       const groups = [...new Set(parsed.map((p) => p.category_name))];
       this.categories = groups.map((g) => ({ category_id: g, category_name: g }));
       this.categoryMap = new Map(groups.map((g) => [g, g]));
@@ -1973,12 +2427,81 @@
       this.q('[data-sp="rawM3uModal"]').classList.add('sp-hidden');
       this.q('[data-sp="statusDot"]').classList.add('sp-online');
       this.q('[data-sp="statusLabel"]').textContent = `${parsed.length} flux M3U`;
+      this.updateTabCounts();
       this.updateBouquetTriggerLabel();
       this.renderCategoryChips();
       this.recomputeFiltered();
       this.renderStandbyCard();
       this.playChannel(this.filtered[0], 0);
       this.showToast(`${parsed.length} flux chargés`);
+    }
+
+    resolveNumericTarget(num) {
+      if (!Number.isFinite(num) || num < 1) return null;
+      const pool = this.filtered.length >= num ? this.filtered : this.streams;
+      if (!pool.length || num > pool.length) return null;
+      for (let idx = num - 1; idx < pool.length; idx++) {
+        if (!isSeparatorStream(pool[idx].name)) {
+          return {
+            channel: pool[idx],
+            filteredIdx: pool === this.filtered ? idx : this.filtered.findIndex((c) => String(c.stream_id) === String(pool[idx].stream_id))
+          };
+        }
+      }
+      return null;
+    }
+
+    handleNumericDigit(digit) {
+      if (!this.streams.length) return;
+      if (!this.numPadBuffer && digit === '0') return;
+      if (this.numPadBuffer.length >= 5) return;
+
+      this.numPadBuffer += digit;
+      const num = Number(this.numPadBuffer);
+      const target = this.resolveNumericTarget(num);
+      const osd = this.q('[data-sp="numPadOsd"]');
+      const digitsEl = this.q('[data-sp="numPadDigits"]');
+      const previewEl = this.q('[data-sp="numPadPreview"]');
+
+      if (osd && digitsEl && previewEl) {
+        digitsEl.textContent = this.numPadBuffer;
+        previewEl.textContent = target ? target.channel.name : 'Numéro hors liste';
+        osd.classList.remove('sp-hidden');
+      }
+
+      if (this.numPadTimer) clearTimeout(this.numPadTimer);
+      this.numPadTimer = setTimeout(() => this.commitNumericZapping(), NUMPAD_COMMIT_MS);
+    }
+
+    cancelNumericZapping() {
+      if (this.numPadTimer) {
+        clearTimeout(this.numPadTimer);
+        this.numPadTimer = null;
+      }
+      this.numPadBuffer = '';
+      this.q('[data-sp="numPadOsd"]')?.classList.add('sp-hidden');
+    }
+
+    commitNumericZapping() {
+      if (this.numPadTimer) {
+        clearTimeout(this.numPadTimer);
+        this.numPadTimer = null;
+      }
+      const raw = this.numPadBuffer;
+      this.numPadBuffer = '';
+      this.q('[data-sp="numPadOsd"]')?.classList.add('sp-hidden');
+      if (!raw) return;
+
+      const num = Number(raw);
+      const target = this.resolveNumericTarget(num);
+      if (!target) {
+        this.showToast(`Chaîne n°${num} introuvable`);
+        return;
+      }
+      if (target.filteredIdx >= 0) {
+        this.scrollChannelIntoView(target.filteredIdx);
+      }
+      this.playChannel(target.channel, target.filteredIdx);
     }
 
     onKeyDown(ev) {
@@ -1989,7 +2512,10 @@
       const m3uOpen = !this.q('[data-sp="rawM3uModal"]').classList.contains('sp-hidden');
 
       if (ev.key === 'Escape') {
-        if (helpOpen) {
+        if (this.numPadBuffer) {
+          ev.preventDefault();
+          this.cancelNumericZapping();
+        } else if (helpOpen) {
           ev.preventDefault();
           this.q('[data-sp="helpModal"]').classList.add('sp-hidden');
         } else if (m3uOpen) {
@@ -2003,7 +2529,21 @@
       }
 
       const tag = ev.target && ev.target.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || helpOpen || m3uOpen) return;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || ev.target?.isContentEditable || helpOpen || m3uOpen) return;
+      if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+
+      // Smart TV / Keyboard numeric channel entry (0-9)
+      if (/^[0-9]$/.test(ev.key) && !this.isBouquetDrawerOpen) {
+        ev.preventDefault();
+        this.handleNumericDigit(ev.key);
+        return;
+      }
+
+      if (ev.key === 'Enter' && this.numPadBuffer) {
+        ev.preventDefault();
+        this.commitNumericZapping();
+        return;
+      }
 
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(ev.key)) {
         this.mountEl.setAttribute('data-input', 'dpad');
@@ -2013,6 +2553,11 @@
       if (ev.key === ' ') {
         ev.preventDefault();
         this.togglePlayPause();
+        return;
+      }
+      if (ev.key === 'r' || ev.key === 'R' || ev.key === 'Backspace') {
+        ev.preventDefault();
+        this.recallPreviousChannel();
         return;
       }
       if (ev.key === 'f' || ev.key === 'F') {
@@ -2085,6 +2630,7 @@
 
     close() {
       // Unified single-interface mode: keep UI mounted, simply stop active video if requested
+      this.cancelNumericZapping();
       this.destroyPlayer();
     }
   }
@@ -2121,6 +2667,9 @@
       computeBackoffMs,
       parseM3uPlaylist,
       isSeparatorStream,
+      computeChannelCanonicalKey,
+      extractVariantBadge,
+      rankVariantForFailover,
       StreamPulseController
     };
   }

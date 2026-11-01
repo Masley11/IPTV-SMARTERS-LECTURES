@@ -1,5 +1,5 @@
 /* StreamPulse PWA Service Worker — Static shell only, NEVER intercepts /api/iptv streams */
-const CACHE_NAME = 'streampulse-shell-v2';
+const CACHE_NAME = 'streampulse-shell-v3';
 const SHELL_ASSETS = [
   '/',
   '/index.html',
