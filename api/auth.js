@@ -11,7 +11,7 @@ function json(res, status, data) {
 }
 function configured() {
   try {
-    if (!process.env.APP_ACCESS_PASSWORD || process.env.APP_ACCESS_PASSWORD.length < 12) return false;
+    if (!process.env.APP_ACCESS_PASSWORD || process.env.APP_ACCESS_PASSWORD.length < 8) return false;
     if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32) return false;
     readPolicy(); getStore(); return true;
   } catch { return false; }

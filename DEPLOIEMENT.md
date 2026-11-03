@@ -40,7 +40,7 @@ Dans **Project → Settings → Environment Variables** :
 
 | Variable | Valeur |
 |---|---|
-| `APP_ACCESS_PASSWORD` | Votre mot de passe personnel, au moins 12 caractères ; idéalement 16+ généré par un gestionnaire de mots de passe. Ne le mettez pas dans GitHub ou dans le chat. |
+| `APP_ACCESS_PASSWORD` | Votre mot de passe personnel, au moins 8 caractères ; un mot de passe plus long reste recommandé. Ne le mettez pas dans GitHub. |
 | `SESSION_SECRET` | Secret aléatoire indépendant d’au moins 32 caractères. |
 | `UPSTASH_REDIS_REST_URL` | Fournie par l’intégration Redis. |
 | `UPSTASH_REDIS_REST_TOKEN` | Fournie par l’intégration Redis ; secrète. |
