@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>StreamPulse — Lecteur TV HTTP</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: #000; color: #fff; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+    #wrap { position: fixed; inset: 0; display: flex; flex-direction: column; }
+    video { flex: 1; width: 100%; background: #000; outline: none; }
+    #hud { position: absolute; left: 0; right: 0; bottom: 0; padding: 18px 22px; background: linear-gradient(transparent, rgba(0,0,0,.85)); display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+    #title { font-size: 20px; font-weight: 700; margin: 0; flex: 1 1 240px; }
+    #status { flex-basis: 100%; font-size: 14px; opacity: .85; }
+    button { font: inherit; padding: 12px 18px; border-radius: 10px; border: 1px solid rgba(255,255,255,.25); background: rgba(255,255,255,.12); color: #fff; cursor: pointer; }
+    button:focus { outline: 3px solid #6ea8ff; }
+    #play { background: #2563eb; border-color: #2563eb; }
+  </style>
+</head>
+<body>
+  <div id="wrap">
+    <video id="video" controls playsinline preload="auto"></video>
+    <div id="hud">
+      <h1 id="title">Chaîne</h1>
+      <button id="play" type="button">Lecture</button>
+      <button id="retry" type="button">Réessayer</button>
+      <button id="back" type="button">Retour à StreamPulse</button>
+      <div id="status">Chargement…</div>
+    </div>
+  </div>
+  <script>
+  (function () {
+    'use strict';
+    var BACK_URL = 'https://streampulse-prive.vercel.app/';
+    var video = document.getElementById('video');
+    var title = document.getElementById('title');
+    var status = document.getElementById('status');
+    var playBtn = document.getElementById('play');
+    var retryBtn = document.getElementById('retry');
+    var backBtn = document.getElementById('back');
+    var hls = null;
+    var mpegtsPlayer = null;
+    var current = null;
+
+    function setStatus(text) { status.textContent = text; }
+    function decodePayload() {
+      try {
+        var hash = location.hash.replace(/^#/, '');
+        if (!hash) return null;
+        hash = hash.replace(/-/g, '+').replace(/_/g, '/');
+        while (hash.length % 4) hash += '=';
+        var json = decodeURIComponent(escape(atob(hash)));
+        var data = JSON.parse(json);
+        if (!data || typeof data.u !== 'string') return null;
+        if (!/^https?:\/\//i.test(data.u)) return null;
+        return data;
+      } catch (e) { return null; }
+    }
+    function loadScript(src) {
+      return new Promise(function (resolve, reject) {
+        var s = document.createElement('script');
+        s.src = src;
+        s.onload = resolve;
+        s.onerror = function () { reject(new Error('script')); };
+        document.head.appendChild(s);
+      });
+    }
+    function destroy() {
+      try { if (hls) { hls.destroy(); hls = null; } } catch (e) {}
+      try { if (mpegtsPlayer) { mpegtsPlayer.destroy(); mpegtsPlayer = null; } } catch (e) {}
+      try { video.pause(); } catch (e) {}
+      video.removeAttribute('src');
+      try { video.load(); } catch (e) {}
+    }
+    function tryPlay() {
+      var p = video.play();
+      if (p && p.catch) p.catch(function () { setStatus('Appuyez sur Lecture pour démarrer.'); });
+    }
+    function start() {
+      if (!current) return;
+      destroy();
+      var url = current.u;
+      title.textContent = current.t || 'Chaîne';
+      setStatus('Connexion au flux…');
+      var isHls = /\.m3u8(?:$|[?#])/i.test(url) || /\/hls\//i.test(url);
+      var isTs = /\.ts(?:$|[?#])/i.test(url);
+      var nativeHls = video.canPlayType('application/vnd.apple.mpegurl') || video.canPlayType('application/x-mpegURL');
+
+      if (isHls && nativeHls) {
+        video.src = url;
+        tryPlay();
+        return;
+      }
+      if (isHls && window.Hls && window.Hls.isSupported()) {
+        hls = new window.Hls({ maxBufferLength: 20, backBufferLength: 10 });
+        hls.loadSource(url);
+        hls.attachMedia(video);
+        hls.on(window.Hls.Events.MANIFEST_PARSED, function () { tryPlay(); });
+        hls.on(window.Hls.Events.ERROR, function (event, data) {
+          if (data && data.fatal) setStatus('Erreur HLS : ' + (data.details || 'flux indisponible') + '. Essayez Réessayer ou une autre chaîne.');
+        });
+        return;
+      }
+      if (isTs && window.mpegts && window.mpegts.isSupported()) {
+        mpegtsPlayer = window.mpegts.createPlayer({ type: 'mpegts', isLive: true, url: url }, { enableStashBuffer: false, lazyLoadMaxDuration: 10 });
+        mpegtsPlayer.attachMediaElement(video);
+        mpegtsPlayer.load();
+        tryPlay();
+        return;
+      }
+      video.src = url;
+      tryPlay();
+    }
+    function ensureLibsThenStart() {
+      var url = current.u;
+      var isHls = /\.m3u8(?:$|[?#])/i.test(url) || /\/hls\//i.test(url);
+      var isTs = /\.ts(?:$|[?#])/i.test(url);
+      var nativeHls = video.canPlayType('application/vnd.apple.mpegurl') || video.canPlayType('application/x-mpegURL');
+      var tasks = [];
+      if (isHls && !nativeHls && !window.Hls) tasks.push(loadScript('https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js').catch(function () {}));
+      if (isTs && !window.mpegts) tasks.push(loadScript('https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.js').catch(function () {}));
+      Promise.all(tasks).then(start, start);
+    }
+
+    playBtn.addEventListener('click', function () { tryPlay(); });
+    retryBtn.addEventListener('click', function () { ensureLibsThenStart(); });
+    backBtn.addEventListener('click', function () { location.href = BACK_URL; });
+    video.addEventListener('playing', function () { setStatus('Lecture en cours.'); });
+    video.addEventListener('error', function () {
+      var err = video.error;
+      setStatus('Erreur vidéo' + (err && err.code ? ' (code ' + err.code + ')' : '') + '. Le flux est peut-être incompatible ou le fournisseur bloque la lecture web.');
+    });
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter' && document.activeElement === document.body) tryPlay();
+      if (event.key === 'Backspace' || event.key === 'Escape') location.href = BACK_URL;
+    });
+
+    current = decodePayload();
+    if (!current) {
+      setStatus('Aucune chaîne reçue. Retournez à StreamPulse et choisissez une chaîne.');
+      title.textContent = 'StreamPulse';
+      return;
+    }
+    ensureLibsThenStart();
+  })();
+  </script>
+</body>
+</html>

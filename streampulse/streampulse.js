@@ -26,6 +26,7 @@
   const PROTO_STORAGE_KEY = 'sp-protocol-v1';
   const LAST_CH_STORAGE_KEY = 'sp-last-channel-v1';
   const ECO_STORAGE_KEY = 'sp-eco-mode-v1';
+  const HTTP_FALLBACK_BASE = 'http://raw.githack.com/Masley11/IPTV-SMARTERS-LECTURES/arena/bad0fe82-iptv-smarters-lectures/tv-http.html';
 
   /* Pure vector SVG icon set — zero emojis or Unicode dingbats */
   const ICONS = {
@@ -1680,7 +1681,8 @@
         this.playUrls = urls;
         playUrl = channel.directUrl || (this.protocol === 'ts' ? urls.ts : urls.hls);
         if (location.protocol === 'https:' && new URL(playUrl).protocol !== 'https:') {
-          throw new Error('Ce fournisseur utilise HTTP. Sur un site HTTPS, demandez-lui une adresse HTTPS : le relais vidéo Vercel est volontairement désactivé.');
+          this.offerHttpFallback(channel, (this.playUrls && this.playUrls.hls) || playUrl);
+          return;
         }
       } catch (error) {
         if (token !== this.sessionToken) return;
@@ -2258,6 +2260,30 @@
           if (this.currentChannel) this.playChannel(this.currentChannel, this.currentIndex);
         };
       }
+    }
+
+    offerHttpFallback(channel, playUrl) {
+      rootGlobal.ONDA_ACCESS?.stop('', false);
+      this.destroyPlayer();
+      this.setBuffering(false);
+      const box = this.q('[data-sp="streamAlert"]');
+      if (!box) return;
+      let fallback = '';
+      try {
+        const json = JSON.stringify({ u: playUrl, t: channel && channel.name ? channel.name : 'Chaîne' });
+        const b64 = btoa(unescape(encodeURIComponent(json))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+        fallback = HTTP_FALLBACK_BASE + '#' + b64;
+      } catch { /* ignore */ }
+      box.classList.remove('sp-hidden');
+      box.innerHTML = `
+        <span style="flex:1">Ce flux est en HTTP. Pour le lire gratuitement sur la TV, ouvrez le lecteur HTTP de secours.</span>
+        ${fallback ? `<button type="button" class="sp-btn sp-btn-primary" data-sp-http-fallback="1">${ICONS.play}<span>Lecteur HTTP</span></button>` : ''}
+        <button type="button" class="sp-btn" data-sp-retry="1">${ICONS.refresh}<span>Réessayer</span></button>
+      `;
+      const fallbackBtn = box.querySelector('[data-sp-http-fallback]');
+      if (fallbackBtn) fallbackBtn.onclick = () => { location.href = fallback; };
+      const retryBtn = box.querySelector('[data-sp-retry]');
+      if (retryBtn) retryBtn.onclick = () => { if (this.currentChannel) this.playChannel(this.currentChannel, this.currentIndex); };
     }
 
     /**
