@@ -156,7 +156,8 @@ test('Unified single interface, 100% SVG (zero stickers/emojis), auto-responsive
   // 6. PWA Manifest, visual assets & safe Service Worker
   assert.equal(manifest.display, 'standalone');
   assert.ok(Array.isArray(manifest.icons) && manifest.icons.length >= 3);
-  assert.match(swSource, /url\.pathname\.startsWith\('\/api\/'\)\)\s*return/);
+  assert.match(swSource, /SHELL_ASSETS\.includes\(url\.pathname \+ url\.search\)/);
+  assert.match(swSource, /No HTML, no API, no credentials, no video/);
   for (const rel of [
     'assets/pwa-icon-512.png',
     'assets/pwa-icon-192.png',
@@ -175,13 +176,15 @@ test('Unified single interface, 100% SVG (zero stickers/emojis), auto-responsive
   assert.match(appSource, /onda-catalogue-cache-v1/);
   assert.match(jsSource, /maxBufferLength:\s*this\.ecoMode\s*\?\s*12\s*:\s*16/);
 
-  // 8. Live EPG, Recents, Recall A<->B, Numeric TV Keypad & strict absence of auto-sleep cutoff timer
+  // 8. Live EPG, Recents, Recall A<->B, Numeric TV Keypad & explicit private quota
   assert.match(jsSource, /sp-recents-v1/);
   assert.match(jsSource, /data-sp="epgStrip"/);
   assert.match(jsSource, /data-sp="variantBar"/);
   assert.match(jsSource, /data-sp="numPadOsd"/);
   assert.match(jsSource, /data-action="recall-ch"/);
-  assert.equal(/wakeLock|Toujours devant|sleepTimer/i.test(jsSource), false, 'Must NEVER auto-cutoff long viewing sessions');
+  assert.match(jsSource, /onda:access-stop/);
+  assert.match(jsSource, /ONDA_ACCESS\.valid\(\)/);
+  assert.doesNotMatch(jsSource, /wakeLock|Toujours devant/);
 });
 
 test('Multi-source canonical channel grouping matches quality/backup variants without homonym collisions', () => {

@@ -92,6 +92,8 @@ function saveCredentials(next) {
     password: String(next.password || '').trim()
   };
   state.credentials = clean;
+  state.account = null;
+  state.accountFetchedAt = 0;
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(clean)); } catch { /* navigation privée */ }
 }
 
@@ -101,10 +103,10 @@ function clearCredentials() {
   clearCatalogueCache();
 }
 
-// --- Cache local IndexedDB (12h) pour économiser 99% du Fast Origin Transfer Vercel sur le catalogue ---
+// --- Cache local IndexedDB (24h) : le catalogue ne quitte pas l’appareil après téléchargement ---
 const CATALOGUE_DB_NAME = 'onda-catalogue-cache-v1';
 const CATALOGUE_STORE = 'catalogues';
-const CATALOGUE_TTL_MS = 12 * 60 * 60 * 1000;
+const CATALOGUE_TTL_MS = 24 * 60 * 60 * 1000;
 
 function openCatalogueDb() {
   return new Promise((resolve, reject) => {
@@ -121,41 +123,36 @@ function openCatalogueDb() {
   });
 }
 
+async function catalogueTransaction(mode, operation) {
+  const db = await openCatalogueDb();
+  return new Promise((resolve, reject) => {
+    let result;
+    const tx = db.transaction(CATALOGUE_STORE, mode);
+    tx.oncomplete = () => { db.close(); resolve(result); };
+    tx.onabort = () => { db.close(); reject(tx.error || new Error('Cache local interrompu')); };
+    tx.onerror = () => { /* onabort closes the connection and rejects once */ };
+    const request = operation(tx.objectStore(CATALOGUE_STORE));
+    if (request) request.onsuccess = () => { result = request.result; };
+  });
+}
+
 async function readCatalogueCache(cacheKey) {
   try {
-    const db = await openCatalogueDb();
-    return await new Promise((resolve) => {
-      const tx = db.transaction(CATALOGUE_STORE, 'readonly');
-      const getReq = tx.objectStore(CATALOGUE_STORE).get(cacheKey);
-      getReq.onsuccess = () => {
-        const entry = getReq.result;
-        if (entry && entry.savedAt && (Date.now() - entry.savedAt) < CATALOGUE_TTL_MS && Array.isArray(entry.categories) && Array.isArray(entry.streams)) {
-          resolve(entry);
-        } else {
-          resolve(null);
-        }
-      };
-      getReq.onerror = () => resolve(null);
-    });
-  } catch {
-    return null;
-  }
+    const entry = await catalogueTransaction('readonly', store => store.get(cacheKey));
+    return entry && entry.savedAt && Date.now() - entry.savedAt < CATALOGUE_TTL_MS &&
+      Array.isArray(entry.categories) && Array.isArray(entry.streams) ? entry : null;
+  } catch { return null; }
 }
 
 async function writeCatalogueCache(cacheKey, categories, streams) {
   try {
-    const db = await openCatalogueDb();
-    const tx = db.transaction(CATALOGUE_STORE, 'readwrite');
-    tx.objectStore(CATALOGUE_STORE).put({ categories, streams, savedAt: Date.now() }, cacheKey);
-  } catch { /* ignore quota or private mode */ }
+    await catalogueTransaction('readwrite', store => store.put({ categories, streams, savedAt: Date.now() }, cacheKey));
+  } catch { /* ignore quota or private mode; the connection is always closed */ }
 }
 
 async function clearCatalogueCache() {
-  try {
-    const db = await openCatalogueDb();
-    const tx = db.transaction(CATALOGUE_STORE, 'readwrite');
-    tx.objectStore(CATALOGUE_STORE).clear();
-  } catch { /* ignore */ }
+  try { await catalogueTransaction('readwrite', store => store.clear()); }
+  catch { /* storage may be unavailable in private browsing */ }
 }
 
 function readMode() {
@@ -165,26 +162,16 @@ function readMode() {
   } catch { return 'auto'; }
 }
 
-function activeRelayOrigin() {
-  try {
-    const custom = (localStorage.getItem('sp-relay-url') || '').trim().replace(/\/+$/, '');
-    if (/^https?:\/\//i.test(custom)) return custom;
-  } catch { /* ignore */ }
-  return state.relayUrl || '';
+function params(action, extra = {}) {
+  return '/api/iptv?' + new URLSearchParams({ action, ...extra });
 }
 
-function params(action, extra = {}) {
-  const q = {
-    action,
-    username: state.credentials.username,
-    password: state.credentials.password,
-    ...extra
+function streamHeaders(creds = state.credentials) {
+  return {
+    'X-Iptv-Server': normalizeServer(creds.server),
+    'X-Iptv-Username': String(creds.username || ''),
+    'X-Iptv-Password': String(creds.password || '')
   };
-  if (!state.lockedServer && state.credentials.server) {
-    q.server = normalizeServer(state.credentials.server);
-  }
-  const relay = (action === 'play' || action === 'ts') ? activeRelayOrigin() : '';
-  return (relay ? relay + '/api/iptv?' : '/api/iptv?') + new URLSearchParams(q);
 }
 
 function mpegtsSupported() {
@@ -332,10 +319,18 @@ async function decryptPairCredentials(envelope, code, secret) {
 }
 
 async function requestJSON(url, options = {}) {
-  const response = await fetch(url, { cache: 'no-store', ...options });
+  const action = new URL(url, location.origin).searchParams.get('action');
+  const credentialsNeeded = ['account', 'categories', 'streams', 'epg'].includes(action);
+  const response = await fetch(url, {
+    cache: 'no-store', credentials: 'same-origin', ...options,
+    headers: { 'X-Onda-Request': '1', ...(credentialsNeeded ? streamHeaders() : {}), ...options.headers }
+  });
   let data;
   try { data = await response.json(); } catch { throw new Error('Réponse inattendue du serveur.'); }
-  if (!response.ok) throw new Error(data.error || 'Connexion impossible.');
+  if (response.status === 401) location.replace('/login.html');
+  if (!response.ok) {
+    const error = new Error(data.error || 'Connexion impossible.'); error.code = data.code; throw error;
+  }
   return data;
 }
 
@@ -362,8 +357,10 @@ function updateSubtitle(itemsCount) {
 
 async function refreshAccount() {
   if (!hasCredentials()) return null;
+  if (state.account && state.accountFetchedAt && Date.now() - state.accountFetchedAt < 15 * 60000) return state.account;
   try {
     state.account = await requestJSON(params('account'));
+    state.accountFetchedAt = Date.now();
     if (!state.loading && state.streams.length) updateSubtitle();
     return state.account;
   } catch {
@@ -443,7 +440,7 @@ async function load(forceRefresh = false) {
         const config = await requestJSON('/api/iptv?action=config');
         state.configChecked = true;
         state.lockedServer = config.locked && config.server ? normalizeServer(config.server) : null;
-        state.relayUrl = config.relayUrl || '';
+        state.relayUrl = ''; // Direct-only: no video relay, even if an old environment variable exists.
         if (state.lockedServer && !state.credentials.server) {
           state.credentials.server = state.lockedServer;
         }
@@ -471,20 +468,20 @@ async function load(forceRefresh = false) {
       state.streams = cached.streams;
       renderCategories();
       renderChannels();
-      requestJSON(params('account')).then((acc) => { state.account = acc; }).catch(() => {});
+      refreshAccount().catch(() => {});
       return;
     }
 
     const [categories, streams, account] = await Promise.all([
       requestJSON(params('categories')),
       requestJSON(params('streams')),
-      requestJSON(params('account')).catch(() => null)
+      refreshAccount().catch(() => null)
     ]);
     if (!Array.isArray(categories) || !Array.isArray(streams)) throw new Error('Catalogue invalide : vérifiez vos identifiants Xtream Codes.');
     state.categories = categories.filter(item => item && item.category_id != null);
     state.streams = streams.filter(item => item && /^\d+$/.test(String(item.stream_id)));
     state.account = account;
-    writeCatalogueCache(cacheKey, state.categories, state.streams);
+    await writeCatalogueCache(cacheKey, state.categories, state.streams);
     renderCategories();
     renderChannels();
   } catch (error) {
@@ -650,308 +647,18 @@ function formatMaxConnMessage(account) {
   return MAX_CONN_MESSAGE;
 }
 
-function startMpegTs(item, token, fromFallback = false, allowHlsFallback = false) {
-  if (token !== state.playToken) return;
-  destroyEngines();
-  if (!mpegtsSupported()) {
-    if (allowHlsFallback) {
-      startHls(item, token, false);
-      return;
-    }
-    showPlayerMessage('Ce fournisseur diffuse en MPEG-TS (.ts) et ce navigateur ne prend pas en charge MSE. Essayez Chrome, Edge, Firefox ou Android.', true);
-    return;
-  }
-  const label = item.name || 'Chaîne';
-  $('player-subtitle').textContent = 'Direct MPEG-TS · ' + label;
-  showPlayerMessage(fromFallback ? 'Passage automatique en flux direct MPEG-TS...' : 'Connexion au direct...');
-
-  const video = $('video');
-  const url = params('ts', { id: item.stream_id, ...zappingParam(), _t: Date.now() });
-  const startedAt = Date.now();
-  const player = window.mpegts.createPlayer(
-    { type: 'mpegts', isLive: true, cors: true, url },
-    {
-      isLive: true,
-      enableWorker: true,
-      enableStashBuffer: true,
-      stashInitialSize: 512 * 1024,
-      lazyLoad: false,
-      liveBufferLatencyChasing: false,
-      liveSync: false,
-      fixAudioTimestampGap: true,
-      autoCleanupSourceBuffer: true,
-      autoCleanupMaxBackwardDuration: 60,
-      autoCleanupMinBackwardDuration: 30
-    }
-  );
-  state.mpegts = player;
-  let hasPlayed = false;
-
-  const markPlaying = () => {
-    if (token !== state.playToken) return;
-    hasPlayed = true;
-    state.localStreaming = true;
-    markLocalPlay();
-    showPlayerMessage('');
-  };
-  video.addEventListener('playing', markPlaying, { once: true });
-
-  player.on(window.mpegts.Events.ERROR, (errorType, errorDetail, errorInfo) => {
-    if (token !== state.playToken) return;
-    if (hasPlayed) {
-      showPlayerMessage('Reconnexion automatique au direct...');
-      state.reconnectTimer = setTimeout(() => startMpegTs(item, token, false, false), 900);
-      return;
-    }
-    const statusCode = errorInfo && errorInfo.code;
-    if (statusCode === 429) {
-      destroyEngines();
-      if (canAutoWaitZapping()) {
-        state.zapRetries++;
-        showPlayerMessage('Changement de chaîne : libération du flux précédent en cours, démarrage automatique...');
-        state.reconnectTimer = setTimeout(() => startMpegTs(item, token, fromFallback, allowHlsFallback), 4500);
-        return;
-      }
-      refreshAccount().then((acc) => {
-        if (token === state.playToken) showPlayerMessage(formatMaxConnMessage(acc), true);
-      });
-      showPlayerMessage(formatMaxConnMessage(state.account), true);
-      return;
-    }
-    if (statusCode === 403) {
-      showPlayerMessage('Ce compte IPTV est inactif, expiré ou ses identifiants sont incorrects.', true);
-      return;
-    }
-    if (allowHlsFallback) {
-      destroyEngines();
-      state.reconnectTimer = setTimeout(() => startHls(item, token, false), 150);
-      return;
-    }
-    const msg = statusCode === 502
-      ? 'Cette chaîne est actuellement hors antenne ou indisponible chez le fournisseur (ex. chaîne événementielle hors match).'
-      : 'Lecture impossible sur cette chaîne (' + (errorDetail || errorType || 'flux indisponible') + ').';
-    showPlayerMessage(msg, true);
-  });
-
-  player.on(window.mpegts.Events.LOADING_COMPLETE, () => {
-    if (token !== state.playToken) return;
-    if (hasPlayed && !$('player-overlay').hidden) {
-      if (state.mode === 'auto' && Date.now() - startedAt < 25000) {
-        destroyEngines();
-        state.reconnectTimer = setTimeout(() => startHls(item, token, false), 150);
-        return;
-      }
-      state.reconnectTimer = setTimeout(() => startMpegTs(item, token, false, false), 400);
-    } else if (!hasPlayed) {
-      if (allowHlsFallback) {
-        destroyEngines();
-        state.reconnectTimer = setTimeout(() => startHls(item, token, false), 150);
-        return;
-      }
-      showPlayerMessage('Cette chaîne est actuellement hors antenne (aucun flux vidéo actif).', true);
-    }
-  });
-
-  player.attachMediaElement(video);
-  player.load();
-  const playPromise = player.play();
-  if (playPromise && typeof playPromise.catch === 'function') {
-    playPromise.catch(() => {
-      if (token === state.playToken && hasPlayed) {
-        showPlayerMessage('Appuyez sur ▶ pour lancer la lecture.');
-      }
-    });
-  }
-}
-
-function startHls(item, token, allowFallback, retryingZap = false) {
-  if (token !== state.playToken) return;
-  destroyEngines();
-  const label = item.name || 'Chaîne';
-  $('player-subtitle').textContent = 'Direct HLS · ' + label;
-  showPlayerMessage(retryingZap
-    ? 'Changement de chaîne : fermeture du flux précédent auprès du serveur, démarrage automatique...'
-    : 'Connexion au direct...');
-
-  const url = params('play', { id: item.stream_id, ...zappingParam(), _t: Date.now() });
-  const video = $('video');
-
-  if (window.Hls && Hls.isSupported()) {
-    const hls = new Hls({
-      lowLatencyMode: false,
-      liveSyncDurationCount: 3,
-      liveMaxLatencyDurationCount: 10,
-      backBufferLength: 30,
-      maxBufferLength: 50,
-      maxMaxBufferLength: 90,
-      maxBufferHole: 0.8,
-      highBufferWatchdogPeriod: 3,
-      nudgeOffset: 0.2,
-      nudgeMaxRetry: 5,
-      manifestLoadingTimeOut: 20000,
-      manifestLoadingMaxRetry: allowFallback ? 1 : 3,
-      manifestLoadingRetryDelay: 700,
-      levelLoadingTimeOut: 20000,
-      levelLoadingMaxRetry: 4,
-      levelLoadingRetryDelay: 700,
-      fragLoadingTimeOut: 30000,
-      fragLoadingMaxRetry: 5,
-      fragLoadingRetryDelay: 700
-    });
-    state.hls = hls;
-    let manifestReady = false;
-    let networkRecoveries = 0;
-
-    hls.loadSource(url);
-    hls.attachMedia(video);
-
-    hls.on(Hls.Events.LEVEL_LOADED, () => {
-      if (token === state.playToken) markLocalPlay();
-    });
-
-    hls.on(Hls.Events.MANIFEST_PARSED, () => {
-      if (token !== state.playToken) return;
-      manifestReady = true;
-      state.localStreaming = true;
-      markLocalPlay();
-      showPlayerMessage('');
-      video.play().catch(() => showPlayerMessage('Appuyez sur ▶ pour lancer la lecture.'));
-    });
-
-    hls.on(Hls.Events.FRAG_BUFFERED, () => {
-      if (token === state.playToken) {
-        networkRecoveries = 0;
-        markLocalPlay();
-      }
-    });
-
-    hls.on(Hls.Events.ERROR, (_event, data) => {
-      if (token !== state.playToken || !data.fatal) return;
-      if (manifestReady) {
-        if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-          hls.recoverMediaError();
-          return;
-        }
-        if (data.type === Hls.ErrorTypes.NETWORK_ERROR && networkRecoveries < 6) {
-          networkRecoveries++;
-          state.reconnectTimer = setTimeout(() => {
-            if (token === state.playToken && state.hls === hls) hls.startLoad();
-          }, 700);
-          return;
-        }
-      }
-      const httpCode = data.response && data.response.code;
-      if (httpCode === 429) {
-        destroyEngines();
-        if (canAutoWaitZapping()) {
-          state.zapRetries++;
-          showPlayerMessage('Changement de chaîne : libération du flux précédent en cours, démarrage automatique...');
-          state.reconnectTimer = setTimeout(() => startHls(item, token, allowFallback, true), 4500);
-          return;
-        }
-        refreshAccount().then((acc) => {
-          if (token === state.playToken) showPlayerMessage(formatMaxConnMessage(acc), true);
-        });
-        showPlayerMessage(formatMaxConnMessage(state.account), true);
-        return;
-      }
-      if (httpCode === 403) {
-        destroyEngines();
-        showPlayerMessage('Ce compte IPTV est inactif, expiré ou ses identifiants sont incorrects.', true);
-        return;
-      }
-      if (allowFallback && mpegtsSupported()) {
-        destroyEngines();
-        state.reconnectTimer = setTimeout(() => startMpegTs(item, token, true, false), 150);
-        return;
-      }
-      showPlayerMessage('Flux HLS indisponible sur cette chaîne. Essayez le mode MPEG-TS ou une autre chaîne.', true);
-    });
-    return;
-  }
-
-  if (video.canPlayType('application/vnd.apple.mpegurl')) {
-    const onNativeError = async () => {
-      if (token !== state.playToken) return;
-      if (canAutoWaitZapping()) {
-        state.zapRetries++;
-        showPlayerMessage('Changement de chaîne : libération du flux précédent en cours, démarrage automatique...');
-        state.reconnectTimer = setTimeout(() => startHls(item, token, allowFallback, true), 4500);
-        return;
-      }
-      const acc = await refreshAccount();
-      if (token !== state.playToken) return;
-      if (acc && acc.maxConnections > 0 && acc.activeConnections >= acc.maxConnections) {
-        showPlayerMessage(formatMaxConnMessage(acc), true);
-        return;
-      }
-      if (allowFallback && mpegtsSupported()) {
-        startMpegTs(item, token, true, false);
-      } else {
-        showPlayerMessage('Ce flux n’est pas disponible en HLS natif sur cet appareil.', true);
-      }
-    };
-    video.addEventListener('error', onNativeError, { once: true });
-    video.addEventListener('playing', () => {
-      if (token === state.playToken) {
-        state.localStreaming = true;
-        markLocalPlay();
-      }
-    }, { once: true });
-    video.src = url;
-    video.play().catch(() => showPlayerMessage('Appuyez sur ▶ pour lancer la lecture.'));
-    return;
-  }
-
-  if (allowFallback && mpegtsSupported()) {
-    startMpegTs(item, token, true, false);
-    return;
-  }
-  showPlayerMessage('Ce navigateur ne prend pas en charge la lecture HLS ou MPEG-TS.', true);
-}
-
-function play(item, keepFullscreen = false) {
-  if (state.accountRefreshTimer) {
-    clearTimeout(state.accountRefreshTimer);
-    state.accountRefreshTimer = null;
-  }
-  destroyPlayback();
-  const token = state.playToken;
-  state.zapStartedAt = Date.now();
-  state.zapRetries = 0;
-  state.current = item;
-  const label = item.name || 'Chaîne';
-  $('player-title').textContent = label;
-  $('player-overlay').hidden = false;
-  document.body.style.overflow = 'hidden';
-  updateModeButtons();
-  if (!keepFullscreen) $('close-player').focus();
-
-  if (state.mode === 'ts') {
-    startMpegTs(item, token, false, false);
-  } else {
-    startHls(item, token, state.mode === 'auto');
-  }
+function play(item) {
+  if (item && window.StreamPulse) window.StreamPulse.open(item);
 }
 
 function closePlayer() {
-  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   destroyPlayback();
   state.current = null;
   $('player-overlay').hidden = true;
   document.body.style.overflow = '';
-  if (!state.loading && state.streams.length) updateSubtitle();
-  $('search').focus();
-  if (state.accountRefreshTimer) clearTimeout(state.accountRefreshTimer);
-  // Attend que le serveur Xtream purge sa session HLS (~20-25s) avant de rafraîchir le compteur
-  state.accountRefreshTimer = setTimeout(() => {
-    state.accountRefreshTimer = null;
-    if ($('player-overlay').hidden) refreshAccount();
-  }, 26000);
 }
 
 window.addEventListener('pagehide', destroyPlayback);
-window.addEventListener('beforeunload', destroyPlayback);
 
 // --- Modales : Paramètres, Association TV QR Code, Télécommande Mobile & À propos ---
 function closeAllModals() {
@@ -1040,10 +747,9 @@ async function startTvPairSession() {
       const pollUrl = `/api/iptv?` + new URLSearchParams({
         action: 'pair_wait',
         code,
-        token: readToken,
-        _t: Date.now()
+        nowait: '1'
       });
-      const res = await fetch(pollUrl, { cache: 'no-store', signal: abortController.signal });
+      const res = await fetch(pollUrl, { cache: 'no-store', headers: { 'X-Pair-Token': readToken }, signal: abortController.signal });
       const data = await res.json().catch(() => ({}));
       if (abortController.signal.aborted) return;
 
@@ -1064,6 +770,8 @@ async function startTvPairSession() {
         await load(true);
         return;
       }
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      if (abortController.signal.aborted) return;
       if (typeof data.expiresIn === 'number') {
         const mins = Math.ceil(data.expiresIn / 60);
         $('pair-status-text').textContent = `En attente du téléphone... (valide encore ${mins} min)`;
@@ -1189,13 +897,7 @@ $('phone-pair-form').addEventListener('submit', async (event) => {
 
   try {
     // Vérifie d'abord que le serveur et les identifiants répondent bien
-    const checkParams = new URLSearchParams({
-      action: 'account',
-      username: creds.username,
-      password: creds.password
-    });
-    if (!state.lockedServer) checkParams.set('server', creds.server);
-    await requestJSON('/api/iptv?' + checkParams);
+    await requestJSON('/api/iptv?action=account', { headers: streamHeaders(creds) });
 
     const encrypted = await encryptPairCredentials(creds, code, state.phonePairSecret);
     await requestJSON('/api/iptv?action=pair_send', {
@@ -1345,9 +1047,10 @@ window.ONDA_BRIDGE = {
     loading: state.loading,
     lastError: state.lastError || ''
   }),
-  buildStreamUrl: (action, streamId) => {
-    if (!hasCredentials()) return '';
-    return params(action, { id: streamId, ...zappingParam(), _t: Date.now() });
+  streamHeaders: () => streamHeaders(),
+  authorizeChannel: (streamId) => {
+    if (!hasCredentials()) return Promise.reject(new Error('Connectez votre playlist dans Ma Playlist.'));
+    return window.ONDA_ACCESS.acquire({ streamId, headers: streamHeaders() });
   },
   fetchShortEpg: async (streamId) => {
     const idStr = String(streamId || '').trim();
@@ -1362,7 +1065,7 @@ window.ONDA_BRIDGE = {
         const first = epgClientCache.keys().next().value;
         if (first !== undefined) epgClientCache.delete(first);
       }
-      epgClientCache.set(key, { listings, expiresAt: Date.now() + 3 * 60 * 1000 });
+      epgClientCache.set(key, { listings, expiresAt: Date.now() + 15 * 60 * 1000 });
       return listings;
     } catch {
       return [];

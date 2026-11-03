@@ -16,7 +16,7 @@
   const CHANNEL_OVERSCAN = 6;
   const BACKOFF_BASE_MS = 1000;
   const BACKOFF_MAX_MS = 16000;
-  const MAX_AUTO_RETRIES = 5;
+  const MAX_AUTO_RETRIES = 2;
   const MAX_ZAP_WAIT_MS = 25000;
   const MAX_VARIANT_FAILOVERS = 2;
   const MAX_RECENTS = 25;
@@ -258,7 +258,7 @@
       this.favorites = this.readFavorites();
       this.recents = this.readRecents();
       this.protocol = this.readProtocol(); // 'auto' | 'hls' | 'ts'
-      this.ecoMode = this.readEcoMode(); // Caps bandwidth/resolution to save Fast Origin Transfer
+      this.ecoMode = this.readEcoMode(); // Default 720p ceiling: saves provider/ISP data, not Vercel video traffic
       this.lastSavedChannelId = this.readLastChannelId();
 
       this.isLoadingCatalogue = false;
@@ -379,7 +379,7 @@
     }
 
     readEcoMode() {
-      try { return localStorage.getItem(ECO_STORAGE_KEY) === '1'; }
+      try { return localStorage.getItem(ECO_STORAGE_KEY) !== '0'; }
       catch { return false; }
     }
 
@@ -404,6 +404,7 @@
       this.updateProtocolButtons();
       this.syncFromBridge();
       this.startTelemetryLoop();
+      rootGlobal.ONDA_ACCESS?.render();
     }
 
     template() {
@@ -424,6 +425,9 @@
         </div>
 
         <div class="sp-top-actions">
+          <button type="button" class="sp-budget-pill sp-focusable" data-action="open-budget" title="Quota privé et économies de données">
+            <span class="sp-budget-dot"></span><span data-sp="budgetBadge">Mode privé</span>
+          </button>
           <button type="button" class="sp-btn sp-btn-soft sp-focusable sp-hidden" data-action="install-pwa" data-sp="installBtn" title="Installer l'application StreamPulse">
             ${ICONS.download}
             <span class="sp-hide-mobile">Installer l’app</span>
@@ -681,6 +685,21 @@
         </div>
       </div>
 
+      <!-- MODALE INTERNE : QUOTA PRIVÉ -->
+      <div class="sp-modal-backdrop sp-hidden" data-sp="budgetModal" role="dialog" aria-modal="true" aria-label="Mon quota privé">
+        <div class="sp-modal-card sp-budget-card">
+          <div class="sp-modal-head"><h3>Votre espace, sous contrôle</h3><button type="button" class="sp-btn sp-btn-icon" data-action="close-budget" aria-label="Fermer">${ICONS.x}</button></div>
+          <p class="sp-budget-intro">Un seul utilisateur. Une seule lecture active. Des quotas partagés entre vos appareils, vérifiés côté serveur.</p>
+          <div class="sp-budget-row"><span>Aujourd’hui</span><strong data-sp="budgetDay">—</strong></div>
+          <div class="sp-budget-track"><i data-sp="budgetDayFill"></i></div>
+          <div class="sp-budget-row"><span>Ce mois-ci</span><strong data-sp="budgetMonth">—</strong></div>
+          <div class="sp-budget-track"><i data-sp="budgetMonthFill"></i></div>
+          <p class="sp-budget-note" data-sp="budgetHours">Chargement du quota sécurisé…</p>
+          <p class="sp-budget-note">Le temps réservé est décompté par minute, même si vous arrêtez avant la fin. Une minute entamée n’est pas remboursée. La pause, la fermeture ou le passage en arrière-plan arrêtent les téléchargements.</p>
+          <div class="sp-budget-actions"><button type="button" class="sp-btn sp-btn-soft" data-action="site-logout">Verrouiller l’espace</button><button type="button" class="sp-btn sp-btn-primary" data-action="close-budget">Compris</button></div>
+        </div>
+      </div>
+
       <!-- MODALE INTERNE : RACCOURCIS CLAVIER & TÉLÉCOMMANDE -->
       <div class="sp-modal-backdrop sp-hidden" data-sp="helpModal" role="dialog" aria-modal="true" aria-label="Raccourcis">
         <div class="sp-modal-card">
@@ -761,6 +780,12 @@
 
       // Double-click on video toggles fullscreen on desktop
       this.q('[data-sp="video"]').addEventListener('dblclick', () => this.toggleFullscreen());
+      this.q('[data-sp="video"]').addEventListener('pause', () => {
+        const video = this.q('[data-sp="video"]');
+        if (this.currentChannel && rootGlobal.ONDA_ACCESS?.valid() && !video.ended && (video.getAttribute('src') || this.hls || this.mpegts || this.shaka)) {
+          rootGlobal.ONDA_ACCESS.stop('Lecture en pause. Appuyez sur Lecture pour reprendre.');
+        }
+      });
 
       // Search channels
       const searchInput = this.q('[data-sp="searchInput"]');
@@ -875,11 +900,28 @@
         else if (this.isOpen) this.startTelemetryLoop();
       });
       rootGlobal.addEventListener('pagehide', () => this.destroyPlayer());
+      rootGlobal.addEventListener('onda:access-stop', (event) => {
+        this.destroyPlayer();
+        this.setBuffering(false);
+        if (this.currentChannel) this.setStreamAlert(event.detail || 'Lecture arrêtée. Vous pouvez réessayer lorsque votre quota le permet.', true);
+      });
     }
 
     handleAction(action) {
       const bridge = rootGlobal.ONDA_BRIDGE;
       switch (action) {
+        case 'open-budget':
+          this.q('[data-sp="budgetModal"]').classList.remove('sp-hidden');
+          rootGlobal.ONDA_ACCESS?.refresh();
+          rootGlobal.ONDA_ACCESS?.render();
+          break;
+        case 'close-budget':
+          this.q('[data-sp="budgetModal"]').classList.add('sp-hidden');
+          break;
+        case 'site-logout':
+          this.destroyPlayer();
+          rootGlobal.ONDA_ACCESS?.logout();
+          break;
         case 'open-qr':
           bridge?.openQrPair?.();
           break;
@@ -1470,6 +1512,7 @@
      * Strict Smart TV Memory Cleanup: destroys HLS / Shaka / mpegts instances and flushes <video> buffer.
      */
     destroyPlayer() {
+      this.destroyingPlayer = true;
       this.sessionToken++;
       if (this.wasStreaming) {
         rootGlobal.ONDA_BRIDGE?.markLocalPlay?.();
@@ -1514,15 +1557,12 @@
           video.load();
         } catch { /* ignore */ }
       }
+      this.destroyingPlayer = false;
     }
 
     buildStreamUrl(channel, action = 'play') {
       if (channel.directUrl) return channel.directUrl;
-      const bridge = rootGlobal.ONDA_BRIDGE;
-      if (bridge && typeof bridge.buildStreamUrl === 'function') {
-        return bridge.buildStreamUrl(action, channel.stream_id);
-      }
-      return '';
+      return action === 'ts' ? this.playUrls?.ts || '' : this.playUrls?.hls || '';
     }
 
     canAutoWaitZapping() {
@@ -1561,7 +1601,7 @@
       }
     }
 
-    playChannel(channel, idx = -1, opts = {}) {
+    async playChannel(channel, idx = -1, opts = {}) {
       if (!channel || isSeparatorStream(channel.name)) return;
       rootGlobal.ONDA_BRIDGE?.stopRootPlayback?.();
 
@@ -1625,12 +1665,30 @@
         video.muted = this.userMuted;
       }
 
-      const playUrl = this.buildStreamUrl(channel, 'play');
-      if (!playUrl) {
-        this.setBuffering(false);
-        this.setStreamAlert('Connectez d’abord votre source IPTV (QR TV ou Ma Playlist).');
+      let playUrl = channel.directUrl || '';
+      if (!playUrl && !rootGlobal.ONDA_BRIDGE?.authorizeChannel) {
+        rootGlobal.ONDA_ACCESS?.stop('Connectez d’abord votre source IPTV (QR TV ou Ma Playlist).');
         return;
       }
+
+      this.setBuffering(true, 'Vérification de votre quota privé…');
+      try {
+        const urls = channel.directUrl
+          ? await rootGlobal.ONDA_ACCESS.acquire()
+          : await rootGlobal.ONDA_BRIDGE.authorizeChannel(channel.stream_id);
+        if (token !== this.sessionToken) return;
+        this.playUrls = urls;
+        playUrl = channel.directUrl || (this.protocol === 'ts' ? urls.ts : urls.hls);
+        if (location.protocol === 'https:' && new URL(playUrl).protocol !== 'https:') {
+          throw new Error('Ce fournisseur utilise HTTP. Sur un site HTTPS, demandez-lui une adresse HTTPS : le relais vidéo Vercel est volontairement désactivé.');
+        }
+      } catch (error) {
+        if (token !== this.sessionToken) return;
+        rootGlobal.ONDA_ACCESS?.stop(error.message || 'Lecture non autorisée.');
+        return;
+      }
+      if (!rootGlobal.ONDA_ACCESS.valid()) return;
+      this.setBuffering(true, 'Connexion directe au fournisseur…');
 
       if (/\.mpd(?:\?|$)/i.test(playUrl)) {
         this.startDashShaka(channel, playUrl, token);
@@ -1807,7 +1865,7 @@
      * Adaptive HLS Engine (hls.js) with ABR enabled & clean native + fatal exponential backoff.
      */
     startAdaptiveHls(channel, token, allowTsFallback) {
-      if (token !== this.sessionToken) return;
+      if (token !== this.sessionToken || !rootGlobal.ONDA_ACCESS?.valid()) return;
       const video = this.q('[data-sp="video"]');
       const streamUrl = this.buildStreamUrl(channel, 'play');
       this.setDomIfChanged('statEngine', 'HLS ABR');
@@ -1836,10 +1894,10 @@
           manifestLoadingMaxRetry: allowTsFallback ? 1 : 3,
           manifestLoadingRetryDelay: 900,
           levelLoadingTimeOut: 20000,
-          levelLoadingMaxRetry: 4,
+          levelLoadingMaxRetry: 2,
           levelLoadingRetryDelay: 900,
           fragLoadingTimeOut: 30000,
-          fragLoadingMaxRetry: 6,
+          fragLoadingMaxRetry: 2,
           fragLoadingRetryDelay: 1000,
           fragLoadingMaxRetryTimeout: 16000
         });
@@ -1944,14 +2002,14 @@
               return;
             }
             this.setBuffering(false);
-            this.setStreamAlert('Limite de connexions atteinte (1/1) : arrêtez la lecture ouverte sur votre autre appareil puis réessayez.', true);
+            rootGlobal.ONDA_ACCESS?.stop('Limite de connexions atteinte (1/1) : arrêtez la lecture sur votre autre appareil puis réessayez.');
             return;
           }
 
           if (httpCode === 403) {
             this.destroyPlayer();
             this.setBuffering(false);
-            this.setStreamAlert('Accès refusé par le fournisseur IPTV (abonnement expiré ou identifiants invalides).', true);
+            rootGlobal.ONDA_ACCESS?.stop('Accès refusé par le fournisseur IPTV : vérifiez votre abonnement et vos identifiants.');
             return;
           }
 
@@ -2005,7 +2063,7 @@
      * MPEG-DASH Engine (Shaka Player) with ABR strictly enabled for .mpd streams.
      */
     async startDashShaka(channel, streamUrl, token) {
-      if (token !== this.sessionToken) return;
+      if (token !== this.sessionToken || !rootGlobal.ONDA_ACCESS?.valid()) return;
       const video = this.q('[data-sp="video"]');
       this.setDomIfChanged('statEngine', 'Shaka DASH ABR');
 
@@ -2024,7 +2082,7 @@
           return;
         }
       }
-      if (token !== this.sessionToken) return;
+      if (token !== this.sessionToken || !rootGlobal.ONDA_ACCESS?.valid()) return;
 
       try {
         rootGlobal.shaka.polyfill.installAll();
@@ -2032,7 +2090,7 @@
         this.shaka = player;
         player.configure({
           abr: { enabled: true },
-          streaming: { bufferingGoal: 40, rebufferingGoal: 4, retryParameters: { maxAttempts: 5, baseDelay: 1000, backoffFactor: 2 } }
+          streaming: { bufferingGoal: 12, rebufferingGoal: 2, retryParameters: { maxAttempts: 2, baseDelay: 1000, backoffFactor: 2 } }
         });
         player.addEventListener('error', () => {
           if (token !== this.sessionToken) return;
@@ -2054,7 +2112,7 @@
      * Live MPEG-TS (.ts) Engine with deep anti-cut buffer & single-connection zapping support.
      */
     startMpegTs(channel, token, fromAutoFallback) {
-      if (token !== this.sessionToken) return;
+      if (token !== this.sessionToken || !rootGlobal.ONDA_ACCESS?.valid()) return;
       if (!rootGlobal.mpegts || !rootGlobal.mpegts.isSupported()) {
         this.setBuffering(false);
         this.setStreamAlert('Flux MPEG-TS non pris en charge sur ce navigateur (essayez le format HLS).', true);
@@ -2062,6 +2120,7 @@
       }
 
       const tsUrl = this.buildStreamUrl(channel, 'ts');
+      if (!tsUrl) { this.setStreamAlert('Adresse MPEG-TS directe indisponible.', true); return; }
       const video = this.q('[data-sp="video"]');
       this.setDomIfChanged('statEngine', 'MPEG-TS Direct');
       this.setBuffering(true, fromAutoFallback ? 'Passage en flux direct MPEG-TS...' : 'Connexion MPEG-TS...');
@@ -2072,14 +2131,14 @@
           isLive: true,
           enableWorker: true,
           enableStashBuffer: true,
-          stashInitialSize: 512 * 1024,
+          stashInitialSize: 128 * 1024,
           lazyLoad: false,
           liveBufferLatencyChasing: false,
           liveSync: false,
           fixAudioTimestampGap: true,
           autoCleanupSourceBuffer: true,
-          autoCleanupMaxBackwardDuration: 60,
-          autoCleanupMinBackwardDuration: 30
+          autoCleanupMaxBackwardDuration: 20,
+          autoCleanupMinBackwardDuration: 10
         }
       );
       this.mpegts = player;
@@ -2135,7 +2194,7 @@
           }, true);
         } else if (!this.tryNextVariantFailover(token, false)) {
           this.setBuffering(false);
-          this.setStreamAlert('Cette chaîne est actuellement hors antenne chez le fournisseur.', true);
+          rootGlobal.ONDA_ACCESS?.stop('Cette chaîne est actuellement hors antenne chez le fournisseur.');
         }
       });
 
@@ -2154,7 +2213,7 @@
       if (this.retryAttempt >= MAX_AUTO_RETRIES) {
         if (this.tryNextVariantFailover(token, false)) return;
         this.setBuffering(false);
-        this.setStreamAlert('Cette chaîne semble hors antenne ou indisponible chez votre fournisseur (essayez une autre chaîne ou le mode MPEG-TS).', true);
+        this.setStreamAlert('Flux direct indisponible. Vérifiez que le fournisseur autorise la lecture web (CORS), utilisez HTTPS, ou essayez une autre chaîne / MPEG-TS. Aucun relais Vercel ne sera utilisé.', true);
         return;
       }
 
@@ -2168,7 +2227,7 @@
 
       this.retryTimer = setTimeout(() => {
         this.retryTimer = null;
-        if (token === this.sessionToken) actionFn();
+        if (token === this.sessionToken && rootGlobal.ONDA_ACCESS?.valid()) actionFn();
       }, delay);
     }
 
@@ -2319,11 +2378,10 @@
     togglePlayPause() {
       const video = this.q('[data-sp="video"]');
       if (!video || !this.currentChannel) return;
-      if (video.paused) {
-        this.safeStartVideoPlayback(video, this.sessionToken);
-        this.q('[data-sp="playBtn"]').innerHTML = ICONS.pause;
+      if (video.paused || !rootGlobal.ONDA_ACCESS?.valid()) {
+        this.playChannel(this.currentChannel, this.currentIndex);
       } else {
-        video.pause();
+        rootGlobal.ONDA_ACCESS.stop('Lecture en pause. Les téléchargements sont arrêtés ; appuyez sur Lecture pour reprendre.');
         this.q('[data-sp="playBtn"]').innerHTML = ICONS.play;
       }
       this.wakeOsd();
@@ -2353,7 +2411,7 @@
         try { localStorage.setItem(ECO_STORAGE_KEY, this.ecoMode ? '1' : '0'); } catch { /* ignore */ }
         const ecoLabel = this.ecoMode ? 'Éco Données' : 'ABR Auto';
         this.q('[data-sp="abrBtn"]').textContent = ecoLabel;
-        this.showToast(this.ecoMode ? 'Mode Éco Données actif (tampon réduit)' : 'Mode ABR Auto standard');
+        this.showToast(this.ecoMode ? 'Mode Éco actif : 720p maximum si disponible, tampon réduit' : 'Qualité automatique : la consommation du fournisseur peut augmenter');
         return;
       }
       const levels = this.hls.levels;

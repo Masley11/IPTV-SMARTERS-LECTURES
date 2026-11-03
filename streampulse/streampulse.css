@@ -1568,3 +1568,17 @@
     color: var(--sp-cyan);
   }
 }
+
+/* Private budget: visible, remote-control focusable, and responsive. */
+#streampulse-module .sp-budget-pill { display:flex; align-items:center; gap:7px; border:1px solid #10b98135; background:#10b9810c; color:#6ee7b7; border-radius:999px; padding:9px 12px; font-size:11px; font-weight:650; cursor:pointer; white-space:nowrap; }
+#streampulse-module .sp-budget-dot { width:5px; height:5px; border-radius:50%; background:#10b981; }
+#streampulse-module .sp-budget-card { max-width:490px; }
+#streampulse-module .sp-budget-intro { color:var(--sp-text-soft); font-size:13px; line-height:1.7; margin:4px 0 24px; }
+#streampulse-module .sp-budget-row { display:flex; justify-content:space-between; gap:14px; font-size:12px; margin:20px 0 10px; color:var(--sp-muted); }
+#streampulse-module .sp-budget-row strong { color:var(--sp-text); font-weight:600; }
+#streampulse-module .sp-budget-track { height:5px; background:var(--sp-surface-2); border-radius:10px; overflow:hidden; }
+#streampulse-module .sp-budget-track i { display:block; height:100%; width:0; background:var(--sp-cyan); border-radius:10px; }
+#streampulse-module .sp-budget-note { font-size:11px; line-height:1.7; color:var(--sp-muted); margin:18px 0 0; }
+#streampulse-module .sp-budget-actions { display:flex; justify-content:space-between; gap:12px; margin-top:24px; }
+@media(max-width:959px) { #streampulse-module .sp-budget-pill { padding:8px; font-size:10px; } #streampulse-module .sp-budget-dot { display:none; } }
+@media(max-width:520px) { #streampulse-module .sp-top-actions { gap:5px; } #streampulse-module .sp-budget-pill { max-width:92px; overflow:hidden; } #streampulse-module .sp-budget-row { font-size:11px; } }

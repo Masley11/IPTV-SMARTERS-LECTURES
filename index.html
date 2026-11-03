@@ -17,6 +17,7 @@
   <script src="/assets/hls.min.js" defer></script>
   <script src="/assets/mpegts.min.js" defer></script>
   <script src="/assets/qrcode.min.js" defer></script>
+  <script src="/access-client.js" defer></script>
   <script src="/app.js" defer></script>
   <script src="/streampulse/streampulse.js" defer></script>
 </head>
@@ -81,7 +82,7 @@
   <div id="settings-overlay" class="modal-backdrop" hidden role="presentation">
     <div class="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <div class="dialog-top"><div><div class="section-kicker">PLAYLIST PERSONNELLE</div><h2 id="settings-title">Connecter vos accès Xtream</h2></div><button id="close-settings" class="dialog-close" type="button" aria-label="Fermer"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
-      <p>Vos identifiants restent enregistrés <strong>uniquement sur cet appareil</strong> (aucune base de données externe).</p>
+      <p>Vos identifiants sont enregistrés <strong>sur cet appareil</strong> et transmis par HTTPS à votre fournisseur via la passerelle privée. Ils ne sont pas enregistrés dans une base de données.</p>
       <div class="quick-pair-bar">
         <button id="settings-to-tv-qr" class="secondary-action-btn" type="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3zM20 14v3M14 20h7"/></svg>Afficher un QR Code (TV)</button>
         <button id="settings-to-phone-send" class="secondary-action-btn" type="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg>Envoyer vers une TV (code)</button>

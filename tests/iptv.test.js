@@ -1,221 +1,164 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
+const crypto = require('node:crypto');
+
+process.env.ONDA_LOCAL_DEV = '1';
+process.env.APP_ACCESS_PASSWORD = 'test-password-private';
+process.env.SESSION_SECRET = 'test-session-secret-at-least-32-characters-long';
+process.env.XTREAM_SERVER = '';
+process.env.DAILY_WATCH_MINUTES = '120';
+process.env.MONTHLY_WATCH_MINUTES = '2700';
+process.env.WATCH_START_HOUR_UTC = '0';
+process.env.WATCH_END_HOUR_UTC = '24';
+const { getStore, LocalStore } = require('../lib/store');
+const { createSession, verifySession } = require('../lib/session');
+const { readPolicy, quotaWindow, publicUsage } = require('../lib/policy');
+const handlers = { auth: require('../api/auth'), access: require('../api/access'), iptv: require('../api/iptv') };
+let middleware;
+test.before(async () => { middleware = (await import('../middleware.js')).default; });
 
 function listen(server) { return new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve(server.address().port))); }
-function close(server) { return new Promise(resolve => server.close(resolve)); }
+function close(server) { return new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }); }
+function reset() { const store = getStore(); store.values.clear(); store.hashes.clear(); }
+const viewerA = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const viewerB = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 
-test('catalogue, compte 1/1, redirection load-balancer HLS signée, flux MPEG-TS, QR pairing chiffré et garde-fou SSRF', async () => {
-  let edgePort = 0;
-  let activeCons = '0';
-  let lastUpstreamConnectionHeader = '';
+test('signed sessions expire, reject tampering and require a strong secret', async () => {
+  const secret = process.env.SESSION_SECRET;
+  const token = await createSession(secret, 1700000000000);
+  assert.equal(await verifySession(token, secret, 1700000000001), true);
+  assert.equal(await verifySession(token, secret, 1700000000000 + 86400001), false);
+  assert.equal(await verifySession(token.slice(0, -1) + 'x', secret, 1700000000001), false);
+  assert.equal(await verifySession(token, '', 1700000000001), false);
+});
 
-  const edge = http.createServer((req, res) => {
-    lastUpstreamConnectionHeader = String(req.headers.connection || '');
-    if (req.url === '/live/play/tok123/77.m3u8') {
-      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-      return res.end('#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI="/keys/77.key"\n#EXTINF:6,\n/hlsr/tok123/77_1.ts\n');
-    }
-    if (req.url === '/hlsr/tok123/77_1.ts') {
-      res.setHeader('Content-Type', 'video/mp2t');
-      return res.end('edge-segment-data');
-    }
-    if (req.url === '/keys/77.key') {
-      return res.end('0123456789abcdef');
-    }
-    if (req.url === '/live/play/tok123/88.ts') {
-      res.setHeader('Content-Type', 'video/mp2t');
-      const packet = Buffer.alloc(190, 0x11);
-      packet[0] = 0x47;
-      packet[188] = 0x47;
-      return res.end(packet);
-    }
-    res.writeHead(404).end();
-  });
-  edgePort = await listen(edge);
+test('conservative quotas reset on UTC day/calendar month and never become negative', () => {
+  const policy = readPolicy({});
+  assert.equal(policy.dailyMinutes, 120); assert.equal(policy.monthlyMinutes, 2700); assert.equal(policy.videoRoute, 'direct');
+  const now = Date.parse('2026-11-03T20:00:00Z');
+  const window = quotaWindow(now, policy);
+  assert.equal(window.windowStart, Date.parse('2026-11-03T06:00:00Z'));
+  assert.equal(window.windowEnd, Date.parse('2026-11-04T00:00:00Z'));
+  assert.equal(window.nextMonth, Date.parse('2026-12-01T00:00:00Z'));
+  assert.equal(publicUsage(7200000, 162000000, policy, now).dayRemainingSeconds, 0);
+  assert.throws(() => readPolicy({ DAILY_WATCH_MINUTES: '9999' }));
+  assert.throws(() => readPolicy({ WATCH_START_HOUR_UTC: '22', WATCH_END_HOUR_UTC: '6' }));
+});
 
+test('atomic reservation: one viewer, zap reuse, no refund, daily/monthly/hour caps', async () => {
+  const store = new LocalStore();
+  const now = Date.now();
+  const keys = ['day', 'month', 'lock'];
+  const args = [now, 'owner-a', 60000, 120000, 180000, now - 3600000, now + 7200000, 86400000, 2678400000];
+  let result = await store.reserve(keys, args);
+  assert.equal(result[0], 'OK'); assert.equal(result[4], 60000);
+  result = await store.reserve(keys, [now + 1000, 'owner-a', ...args.slice(2)]);
+  assert.equal(result[4], 0, 'zapping reuses the current paid minute');
+  result = await store.reserve(keys, [now + 2000, 'owner-b', ...args.slice(2)]);
+  assert.equal(result[0], 'BUSY');
+  result = await store.reserve(keys, [now + 55000, 'owner-a', ...args.slice(2)]);
+  assert.equal(result[1], now + 120000); assert.equal(result[2], 120000);
+  await store.release('lock', 'owner-b'); assert.ok(store.hash('lock', now));
+  await store.release('lock', 'owner-a'); assert.equal(store.hash('lock', now), null);
+  result = await store.reserve(keys, [now + 60000, 'owner-b', ...args.slice(2)]);
+  assert.equal(result[0], 'DAILY_LIMIT'); assert.equal(result[2], 120000);
+  store.values.set('month', { value: '180000', expires: now + 86400000 });
+  result = await store.reserve(['day2', 'month', 'lock'], [now, 'owner-a', ...args.slice(2)]);
+  assert.equal(result[0], 'MONTHLY_LIMIT'); assert.equal(result[3], 180000);
+  result = await store.reserve(['day3', 'month3', 'lock'], [now, 'owner-a', ...args.slice(2, 5), now - 3600000, now - 1, ...args.slice(7)]);
+  assert.equal(result[0], 'OUTSIDE_HOURS');
+});
+
+test('private HTTP gateway: auth, distributed pairing, quotas, metadata headers and NO video relay', async () => {
+  reset();
+  let metadataCalls = 0; let videoCalls = 0;
   const upstream = http.createServer((req, res) => {
-    if (req.url.startsWith('/player_api.php')) {
-      const query = new URL(req.url, 'http://localhost').searchParams;
-      res.setHeader('Content-Type', 'application/json');
-      if (!query.get('action')) {
-        return res.end(JSON.stringify({
-          user_info: {
-            username: 'test',
-            status: 'Active',
-            active_cons: activeCons,
-            max_connections: '1',
-            exp_date: '1795267007'
-          }
-        }));
-      }
-      if (query.get('action') === 'get_short_epg') {
-        const nowSec = Math.floor(Date.now() / 1000);
-        return res.end(JSON.stringify({
-          epg_listings: [
-            {
-              title: Buffer.from('Ligue des Champions : Direct', 'utf8').toString('base64'),
-              description: Buffer.from('Grande soirée européenne', 'utf8').toString('base64'),
-              start_timestamp: String(nowSec - 900),
-              stop_timestamp: String(nowSec + 2700)
-            },
-            {
-              title: Buffer.from('Debrief Sport', 'utf8').toString('base64'),
-              description: '',
-              start_timestamp: String(nowSec + 2700),
-              stop_timestamp: String(nowSec + 5400)
-            }
-          ]
-        }));
-      }
-      return res.end(JSON.stringify(query.get('action') === 'get_live_categories' ? [{ category_id: '1', category_name: 'Infos' }] : [{ stream_id: 42, name: 'Info TV' }]));
-    }
-    if (req.url.endsWith('/99.m3u8')) {
-      res.writeHead(401).end();
-      return;
-    }
-    if (req.url.endsWith('/42.m3u8')) {
-      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-      return res.end('#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI="key.bin"\n#EXTINF:5,\nchunk.ts\n');
-    }
-    if (req.url.endsWith('/77.m3u8')) {
-      res.writeHead(302, { Location: `http://127.0.0.1:${edgePort}/live/play/tok123/77.m3u8` });
-      return res.end();
-    }
-    if (req.url.endsWith('/88.m3u8')) {
-      res.setHeader('Content-Type', 'video/mp2t');
-      const packet = Buffer.alloc(190, 0x22);
-      packet[0] = 0x47;
-      packet[188] = 0x47;
-      return res.end(packet);
-    }
-    if (req.url.endsWith('/88.ts')) {
-      res.writeHead(302, { Location: `http://127.0.0.1:${edgePort}/live/play/tok123/88.ts` });
-      return res.end();
-    }
-    if (req.url.endsWith('/chunk.ts')) { res.setHeader('Content-Type', 'video/mp2t'); return res.end('segment'); }
-    if (req.url.endsWith('/key.bin')) return res.end('key');
-    res.writeHead(404).end();
+    const url = new URL(req.url, 'http://localhost');
+    if (url.pathname.startsWith('/live/')) { videoCalls++; res.writeHead(500).end(); return; }
+    metadataCalls++;
+    assert.equal(url.searchParams.get('username'), 'test');
+    assert.equal(url.searchParams.get('password'), 'secret');
+    res.setHeader('Content-Type', 'application/json');
+    const action = url.searchParams.get('action');
+    if (!action) return res.end(JSON.stringify({ user_info: { auth: 1, status: 'Active', active_cons: 0, max_connections: 1, exp_date: '1795267007' } }));
+    if (action === 'get_live_categories') return res.end(JSON.stringify([{ category_id: '1', category_name: 'Infos', private_field: 'remove' }]));
+    if (action === 'get_live_streams') return res.end(JSON.stringify([{ stream_id: 42, name: 'Info TV', stream_icon: 'http://unsafe.example/image.png' }]));
+    if (action === 'get_short_epg') return res.end(JSON.stringify({ epg_listings: [{ title: Buffer.from('Journal').toString('base64'), description: '', start_timestamp: Math.floor(Date.now() / 1000) - 60, stop_timestamp: Math.floor(Date.now() / 1000) + 1800 }] }));
+    res.end('[]');
   });
   const upstreamPort = await listen(upstream);
   process.env.XTREAM_SERVER = `http://127.0.0.1:${upstreamPort}`;
-  const handler = require('../api/iptv');
-  const gateway = http.createServer((req, res) => {
-    if (req.method === 'GET') req.resume();
-    return handler(req, res);
-  });
-  const gatewayPort = await listen(gateway);
-  const origin = `http://127.0.0.1:${gatewayPort}`;
-  const base = `${origin}/api/iptv?username=test&password=secret`;
+  const gateway = http.createServer((req, res) => handlers[new URL(req.url, 'http://localhost').pathname.split('/')[2]](req, res));
+  const port = await listen(gateway); const origin = `http://127.0.0.1:${port}`;
+  const post = (path, body, cookie = '') => fetch(origin + path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Onda-Request': '1', 'X-Iptv-Username': 'test', 'X-Iptv-Password': 'secret', Cookie: cookie }, body: JSON.stringify(body) });
   try {
-    // 1. Catalogue + Account info
-    const categories = await fetch(base + '&action=categories');
-    assert.equal(categories.status, 200);
+    assert.equal((await fetch(origin + '/api/access')).status, 401);
+    assert.equal((await fetch(origin + '/api/iptv?action=streams')).status, 401);
+    const denied = await middleware(new Request(origin + '/'));
+    assert.equal(denied.status, 302); assert.match(denied.headers.get('location'), /login\.html/);
+    assert.equal((await post('/api/auth', { password: 'wrong' })).status, 401);
+    const login = await post('/api/auth', { password: process.env.APP_ACCESS_PASSWORD });
+    assert.equal(login.status, 200);
+    const setCookie = login.headers.get('set-cookie');
+    assert.match(setCookie, /HttpOnly/); assert.match(setCookie, /SameSite=Strict/);
+    const cookie = setCookie.split(';')[0];
+    const allowed = await middleware(new Request(origin + '/', { headers: { cookie } }));
+    assert.equal(allowed.headers.get('x-middleware-next'), '1');
+    const headers = { Cookie: cookie, 'X-Iptv-Username': 'test', 'X-Iptv-Password': 'secret' };
+    const categories = await fetch(origin + '/api/iptv?action=categories', { headers });
     assert.deepEqual(await categories.json(), [{ category_id: '1', category_name: 'Infos' }]);
-    const streams = await fetch(base + '&action=streams');
-    assert.equal((await streams.json())[0].stream_id, 42);
-    const account = await fetch(base + '&action=account');
-    assert.equal(account.status, 200);
-    assert.deepEqual(await account.json(), {
-      status: 'Active',
-      activeConnections: 0,
-      maxConnections: 1,
-      expDate: '1795267007'
-    });
+    const streams = await fetch(origin + '/api/iptv?action=streams', { headers });
+    assert.deepEqual(await streams.json(), [{ stream_id: 42, name: 'Info TV' }]);
+    const account = await fetch(origin + '/api/iptv?action=account', { headers });
+    assert.equal((await account.json()).maxConnections, 1);
+    const epg = await fetch(origin + '/api/iptv?action=epg&id=42', { headers });
+    assert.equal((await epg.json()).listings[0].title, 'Journal');
+    const before = metadataCalls;
+    await fetch(origin + '/api/iptv?action=epg&id=42', { headers });
+    assert.equal(metadataCalls, before, 'shared EPG cache avoids another provider request');
 
-    // 2. Same-origin HLS
-    const playlist = await fetch(base + '&action=play&id=42');
-    assert.equal(playlist.status, 200);
-    const text = await playlist.text();
-    assert.match(text, /#EXT-X-KEY:METHOD=AES-128,URI="\/api\/iptv\?/);
-    const segment = text.split('\n').find(line => line.startsWith('/api/iptv?'));
-    const segmentResponse = await fetch(new URL(segment, origin));
-    assert.equal(await segmentResponse.text(), 'segment');
+    const leased = await post('/api/access', { action: 'lease', viewerId: viewerA, streamId: 42 }, cookie);
+    assert.equal(leased.status, 200);
+    const data = await leased.json();
+    assert.equal(data.urls.hls, `${process.env.XTREAM_SERVER}/live/test/secret/42.m3u8`);
+    assert.equal(data.usage.dayUsedSeconds, 60); assert.equal(data.policy.videoRoute, 'direct');
+    assert.equal((await post('/api/access', { action: 'lease', viewerId: viewerB }, cookie)).status, 409);
+    assert.equal(videoCalls, 0, 'authorization never fetches video');
+    for (const action of ['play', 'ts', 'resource']) assert.equal((await fetch(origin + '/api/iptv?action=' + action, { headers })).status, 410);
+    assert.equal(videoCalls, 0);
 
-    // 3. Cross-origin load-balancer 302 redirect HLS + HMAC-signed segment
-    const redirected = await fetch(base + '&action=play&id=77');
-    assert.equal(redirected.status, 200);
-    const redirectedText = await redirected.text();
-    assert.match(redirectedText, /sig=/);
-    const edgeSegLine = redirectedText.split('\n').find(line => line.startsWith('/api/iptv?'));
-    const edgeSegResp = await fetch(new URL(edgeSegLine, origin));
-    assert.equal(edgeSegResp.status, 200);
-    assert.equal(await edgeSegResp.text(), 'edge-segment-data');
+    const pair = await post('/api/iptv?action=pair_create', {}, cookie);
+    const { code, readToken } = await pair.json(); assert.equal(code.length, 6);
+    const envelope = { code, iv: 'AAAAAAAAAAAAAAAA', ciphertext: 'BBBBBBBBBBBBBBBBBBBBBBBB', mode: 'qr' };
+    assert.equal((await post('/api/iptv?action=pair_send', envelope, cookie)).status, 200);
+    const waitURL = `/api/iptv?action=pair_wait&code=${code}&nowait=1`;
+    const received = await fetch(origin + waitURL, { headers: { ...headers, 'X-Pair-Token': readToken } });
+    assert.equal((await received.json()).envelope.ciphertext, envelope.ciphertext);
+    assert.equal((await fetch(origin + waitURL, { headers: { ...headers, 'X-Pair-Token': readToken } })).status, 404);
 
-    // 4. Detection of raw MPEG-TS on play + live streaming via action=ts
-    const rawTsPlay = await fetch(base + '&action=play&id=88');
-    assert.equal(rawTsPlay.status, 415);
-    assert.equal((await rawTsPlay.json()).code, 'MPEGTS_DIRECT');
-
-    const tsStream = await fetch(base + '&action=ts&id=88');
-    assert.equal(tsStream.status, 200);
-    assert.match(tsStream.headers.get('content-type') || '', /video\/mp2t/);
-    const tsBuf = Buffer.from(await tsStream.arrayBuffer());
-    assert.equal(tsBuf[0], 0x47);
-    assert.equal(tsBuf.length, 190);
-
-    // 4b. Short EPG decoding (Base64 UTF-8 -> clean JSON now + next)
-    const epgResp = await fetch(base + '&action=epg&id=42');
-    assert.equal(epgResp.status, 200);
-    const epgJson = await epgResp.json();
-    assert.equal(epgJson.listings.length, 2);
-    assert.equal(epgJson.listings[0].title, 'Ligue des Champions : Direct');
-    assert.equal(epgJson.listings[0].desc, 'Grande soirée européenne');
-    assert.equal(epgJson.listings[1].title, 'Debrief Sport');
-
-    // 5. Detection of max_connections: 1 already occupied on another device (429 MAX_CONNECTIONS)
-    activeCons = '1';
-    const busy = await fetch(base + '&action=play&id=99');
-    assert.equal(busy.status, 429);
-    const busyJson = await busy.json();
-    assert.equal(busyJson.code, 'MAX_CONNECTIONS');
-    assert.equal(busyJson.activeConnections, 1);
-    assert.equal(busyJson.maxConnections, 1);
-
-    // 6. Real-time E2EE TV <-> Phone QR Pairing (long-poll wakeup + burn-after-reading)
-    const pairCreated = await fetch(`${origin}/api/iptv?action=pair_create`, { method: 'POST' });
-    assert.equal(pairCreated.status, 200);
-    const { code, readToken } = await pairCreated.json();
-    assert.equal(code.length, 6);
-
-    const waitPromise = fetch(`${origin}/api/iptv?action=pair_wait&code=${code}&token=${encodeURIComponent(readToken)}`);
-    await new Promise(r => setTimeout(r, 80));
-    const sendResp = await fetch(`${origin}/api/iptv?action=pair_send`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, iv: 'AAAAAAAAAAAAAAAA', ciphertext: 'BBBBBBBBBBBBBBBBBBBBBBBB', mode: 'qr' })
-    });
-    assert.equal(sendResp.status, 200);
-
-    const waited = await waitPromise;
-    assert.equal(waited.status, 200);
-    const waitedJson = await waited.json();
-    assert.equal(waitedJson.status, 'paired');
-    assert.equal(waitedJson.envelope.ciphertext, 'BBBBBBBBBBBBBBBBBBBBBBBB');
-
-    // Burn-after-reading: second poll must return 404
-    const secondRead = await fetch(`${origin}/api/iptv?action=pair_wait&code=${code}&token=${encodeURIComponent(readToken)}&nowait=1`);
-    assert.equal(secondRead.status, 404);
-
-    // 7. SSRF / unsigned external host rejection + Multi-provider loopback SSRF block
-    const external = await fetch(base + '&action=resource&id=' + encodeURIComponent('http://example.com/anything'));
-    assert.equal(external.status, 502);
-    assert.match((await external.json()).error, /hors du serveur/);
-
-    const forgedEdge = await fetch(base + '&action=resource&exp=9999999999999&sig=forged&id=' + encodeURIComponent(`http://127.0.0.1:${edgePort}/hlsr/tok123/77_1.ts`));
-    assert.equal(forgedEdge.status, 502);
-    assert.match((await forgedEdge.json()).error, /hors du serveur/);
-
-    delete process.env.XTREAM_SERVER;
-    const ssrfAttempt = await fetch(`${origin}/api/iptv?action=categories&server=${encodeURIComponent(`http://127.0.0.1:${upstreamPort}`)}&username=test&password=secret`);
-    assert.equal(ssrfAttempt.status, 502);
-    assert.match((await ssrfAttempt.json()).error, /privée interdite|interdit/);
-
-    const invalid = await fetch(`${origin}/api/iptv?action=play&server=${encodeURIComponent('http://93.184.216.34')}&username=test&password=secret&id=../../etc`);
-    assert.equal(invalid.status, 400);
+    assert.equal((await post('/api/access', { action: 'release', viewerId: viewerA }, cookie)).status, 200);
+    assert.equal((await post('/api/access', { action: 'lease', viewerId: viewerB }, cookie)).status, 200);
+    await post('/api/access', { action: 'release', viewerId: viewerB }, cookie);
+    assert.equal((await post('/api/auth', { action: 'logout' }, cookie)).status, 200);
+    assert.equal((await fetch(origin + '/api/access', { headers: { Cookie: cookie } })).status, 401, 'logout revokes server-side session');
   } finally {
-    await close(gateway);
-    await close(upstream);
-    await close(edge);
+    await close(gateway); await close(upstream); process.env.XTREAM_SERVER = '';
   }
+});
+
+test('production fails closed without shared Redis and rejects cross-origin mutations', async () => {
+  const previous = process.env.ONDA_LOCAL_DEV;
+  process.env.ONDA_LOCAL_DEV = '0';
+  try {
+    assert.throws(() => getStore(), /Configurez/);
+    const response = await handlers.auth({ method: 'GET', headers: {} }, { setHeader() {}, end() {} });
+    assert.equal(response, undefined);
+    const token = await createSession(process.env.SESSION_SECRET);
+    const cookie = `onda_session=${token}`;
+    const res = { statusCode: 0, headers: {}, setHeader(k, v) { this.headers[k] = v; }, end(value) { this.body = value; } };
+    await handlers.access({ method: 'GET', headers: { cookie } }, res);
+    assert.equal(res.statusCode, 503);
+    assert.equal(JSON.parse(res.body).code, 'QUOTA_UNAVAILABLE');
+  } finally { process.env.ONDA_LOCAL_DEV = previous; }
 });

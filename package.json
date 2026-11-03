@@ -5,7 +5,17 @@
   "scripts": {
     "dev": "node dev-server.js",
     "start": "node dev-server.js",
-    "test": "node --test tests/iptv.test.js tests/streampulse.test.js"
+    "build": "node scripts/build.js",
+    "test": "node --test tests/*.test.js",
+    "check": "npm run build && npm test"
   },
-  "engines": { "node": ">=18" }
+  "engines": {
+    "node": "22.x"
+  },
+  "dependencies": {
+    "@vercel/functions": "3.10.6"
+  },
+  "devDependencies": {
+    "jsdom": "26.1.0"
+  }
 }
