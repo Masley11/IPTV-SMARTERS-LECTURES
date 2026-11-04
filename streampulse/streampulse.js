@@ -26,7 +26,7 @@
   const PROTO_STORAGE_KEY = 'sp-protocol-v1';
   const LAST_CH_STORAGE_KEY = 'sp-last-channel-v1';
   const ECO_STORAGE_KEY = 'sp-eco-mode-v1';
-  const HTTP_FALLBACK_BASE = 'http://raw.githack.com/Masley11/IPTV-SMARTERS-LECTURES/arena/bad0fe82-iptv-smarters-lectures/tv-http.html';
+  const HTTP_FALLBACK_BASE = 'http://raw.githack.com/Masley11/IPTV-SMARTERS-LECTURES/arena/bad0fe82-iptv-smarters-lectures/tv-http.xhtml';
 
   /* Pure vector SVG icon set — zero emojis or Unicode dingbats */
   const ICONS = {
@@ -2276,10 +2276,13 @@
       } catch { /* ignore */ }
       box.classList.remove('sp-hidden');
       box.innerHTML = `
-        <span style="flex:1">Ce flux est en HTTP. Pour le lire gratuitement sur la TV, ouvrez le lecteur HTTP de secours.</span>
-        ${fallback ? `<button type="button" class="sp-btn sp-btn-primary" data-sp-http-fallback="1">${ICONS.play}<span>Lecteur HTTP</span></button>` : ''}
+        <span style="flex:1">Ce flux est en HTTP. Essayez d’abord la lecture directe, sinon le lecteur HTTP de secours.</span>
+        <button type="button" class="sp-btn sp-btn-primary" data-sp-http-direct="1">${ICONS.play}<span>Lecture directe</span></button>
+        ${fallback ? `<button type="button" class="sp-btn" data-sp-http-fallback="1">${ICONS.tv}<span>Lecteur HTTP</span></button>` : ''}
         <button type="button" class="sp-btn" data-sp-retry="1">${ICONS.refresh}<span>Réessayer</span></button>
       `;
+      const directBtn = box.querySelector('[data-sp-http-direct]');
+      if (directBtn) directBtn.onclick = () => { location.href = playUrl; };
       const fallbackBtn = box.querySelector('[data-sp-http-fallback]');
       if (fallbackBtn) fallbackBtn.onclick = () => { location.href = fallback; };
       const retryBtn = box.querySelector('[data-sp-retry]');
