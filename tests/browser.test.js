@@ -27,8 +27,8 @@ async function boot(t, respond) {
 }
 const json = data => ({ ok: true, status: 200, json: async () => data });
 const snapshot = {
-  policy: { dailyMinutes: 120, monthlyMinutes: 2700, startHour: 6, endHour: 24, videoRoute: 'direct' },
-  usage: { dayRemainingSeconds: 7200, monthRemainingSeconds: 162000, dayUsedSeconds: 0, monthUsedSeconds: 0, inWindow: true }
+  policy: { dailyMinutes: 240, monthlyMinutes: 2700, startHour: 6, endHour: 24, videoRoute: 'direct' },
+  usage: { dayRemainingSeconds: 14400, monthRemainingSeconds: 162000, dayUsedSeconds: 0, monthUsedSeconds: 0, inWindow: true }
 };
 
 test('private player boots, renders budget, and gates BOTH Xtream and raw M3U before media loading', async t => {
@@ -44,7 +44,7 @@ test('private player boots, renders budget, and gates BOTH Xtream and raw M3U be
   });
   assert.equal(d.querySelectorAll('#streampulse-module .sp-ch-row').length, 0);
   d.querySelector('[data-action="open-budget"]').click();
-  assert.match(d.querySelector('[data-sp="budgetDay"]').textContent, /2 h restantes/);
+  assert.match(d.querySelector('[data-sp="budgetDay"]').textContent, /4 h restantes/);
   assert.equal(d.querySelector('[data-sp="budgetModal"]').classList.contains('sp-hidden'), false);
   d.querySelector('[data-action="close-budget"]').click();
   const controller = w.StreamPulse.instance;
@@ -80,6 +80,41 @@ test('quota refusal never reaches a media engine', async t => {
   await c.playChannel({ stream_id: 42, name: 'Test' });
   assert.equal(mediaStarted, false); assert.equal(w.ONDA_ACCESS.valid(), false);
   assert.match(c.q('[data-sp="streamAlert"]').textContent, /Quotidien épuisé/);
+});
+
+test('HTTP channel hands off to the external TV player without releasing the shared lease', async t => {
+  const handoffs = [];
+  const { w, d } = await boot(t, async (url, options) => {
+    if (url === '/api/access' && options.method === 'POST') {
+      const body = JSON.parse(options.body);
+      if (body.action === 'tv_handoff') {
+        handoffs.push(body);
+        return json({ token: 'a'.repeat(43), expiresAt: Date.now() + 3600000 });
+      }
+      return json({ ...snapshot, lease: { expiresAt: Date.now() + 60000, serverNow: Date.now(), chargedSeconds: 60 }, urls: null });
+    }
+    if (url === '/api/access') return json(snapshot);
+    if (url.includes('action=config')) return json({ locked: false, server: null, videoRoute: 'direct' });
+    return json([]);
+  });
+  const c = w.StreamPulse.instance;
+  let mediaStarted = false;
+  c.startAdaptiveHls = () => { mediaStarted = true; };
+  await c.playChannel({ stream_id: 'm3u-http', name: 'Chaîne HTTP', directUrl: 'http://direct.test/video.m3u8' });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(handoffs.length, 1);
+  assert.equal(w.ONDA_ACCESS.handoffPending, true);
+  assert.equal(mediaStarted, false);
+  assert.ok(d.querySelector('[data-sp-http-fallback]'));
+  const state = JSON.parse(w.sessionStorage.getItem('sp-tv-return-v1'));
+  assert.equal(state.channel, 'm3u-http');
+  let releases = 0;
+  w.ONDA_ACCESS.request = async (path, options = {}) => {
+    if (options.body && JSON.parse(options.body).action === 'release') releases++;
+    return json({ ok: true });
+  };
+  w.dispatchEvent(new w.Event('pagehide'));
+  assert.equal(releases, 0, 'handoff must not release the lease that the TV player will reuse');
 });
 
 test('login rejects open redirects and never puts the password in a URL', async t => {

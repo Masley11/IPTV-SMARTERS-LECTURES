@@ -7,13 +7,13 @@ Lecteur Web et Smart TV en HTML/CSS/JavaScript, avec passerelle Node.js pour Ver
 Cette version est conçue pour **une personne** sur **Vercel Hobby**, avec une connexion par mot de passe et des quotas partagés entre ses appareils.
 
 - **Vidéo directe** du fournisseur vers le navigateur : aucun segment vidéo ne traverse Vercel. Les anciennes actions de relais répondent `410`.
-- **120 minutes/jour**, **2 700 minutes/mois (45 h)**, **06 h–minuit UTC** par défaut ; UTC correspond à l’heure du Burkina Faso.
+- **240 minutes/jour (4 h)**, **2 700 minutes/mois (45 h)**, **06 h–minuit UTC** par défaut ; UTC correspond à l’heure du Burkina Faso.
 - Une seule autorisation de lecture active, renouvelée chaque minute via Redis. Pause, arrière-plan, fermeture et expiration arrêtent le lecteur.
 - Catalogue IndexedDB pendant 24 h, EPG partagé pendant 10 min, petit cache local d’EPG et ressources statiques versionnées.
 - Association TV par QR code chiffré de bout en bout, stockage temporaire Redis de 5 min et suppression après lecture.
 - HLS.js, MPEG-TS et Shaka DASH, navigation télécommande, recherche, favoris et défilement virtuel pour les grands catalogues.
 
-**Important :** le fournisseur doit accepter la lecture web directe en **HTTPS**, avec les règles CORS nécessaires. Un fournisseur HTTP-only ou incompatible avec un navigateur peut ne pas fonctionner. Aucun relais vidéo n’est réactivé en cachette pour contourner cette limite.
+**Important :** dans l’application Vercel, le fournisseur doit accepter la lecture web directe en **HTTPS**, avec les règles CORS nécessaires. Pour les chaînes HTTP (fréquentes en IPTV) sur une Smart TV compatible, StreamPulse propose un **lecteur TV HTTP externe** : la page est servie par raw.githack, la vidéo va directement du fournisseur à la TV, et Vercel ne transporte toujours aucun segment vidéo. Ce lecteur externe conserve les bouquets, la recherche, les chaînes précédente/suivante et le quota partagé. Aucun relais vidéo n’est réactivé en cachette.
 
 Les quotas contrôlent les autorisations et le lecteur fourni, pas un client volontairement modifié. Une URL déjà remise au navigateur ne peut pas être révoquée chez le fournisseur par Vercel. Le mode éco réduit la consommation du fournisseur/réseau, **pas** un transit vidéo Vercel qui n’existe plus. Les allowances Hobby sont partagées par tout le compte : surveillez également vos autres projets.
 

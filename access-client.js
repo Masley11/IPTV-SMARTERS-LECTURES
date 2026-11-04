@@ -25,13 +25,13 @@
     constructor() {
       this.viewerId = viewerId(); this.snapshot = null; this.active = false;
       this.lease = null; this.offset = 0; this.timer = null; this.deadlineTimer = null;
-      this.generation = 0; this.pending = null; this.lastRefresh = 0; this.metadata = null;
+      this.generation = 0; this.pending = null; this.lastRefresh = 0; this.metadata = null; this.handoffPending = false;
       root.addEventListener('onda:access-updated', () => this.render());
       document.addEventListener('visibilitychange', () => {
-        if (document.hidden) this.stop('Lecture arrêtée : application en arrière-plan.');
+        if (document.hidden) { if (!this.handoffPending) this.stop('Lecture arrêtée : application en arrière-plan.'); }
         else if (Date.now() - this.lastRefresh > 60000) this.refresh();
       });
-      root.addEventListener('pagehide', () => this.stop('', false));
+      root.addEventListener('pagehide', () => { if (!this.handoffPending) this.stop('', false); });
       if (document.readyState === 'loading' || document.readyState === 'interactive') document.addEventListener('DOMContentLoaded', () => { this.refresh(); this.render(); }, { once: true });
       else { this.refresh(); this.render(); }
     }
@@ -63,8 +63,19 @@
       try { this.accept(await this.request('/api/access')); }
       catch (error) { root.dispatchEvent(new CustomEvent('onda:access-error', { detail: error.message })); }
     }
+    async tvHandoff() {
+      const metadata = this.metadata || {};
+      const data = await this.request('/api/access', {
+        method: 'POST', headers: metadata.headers || {},
+        body: JSON.stringify({ action: 'tv_handoff', viewerId: this.viewerId })
+      });
+      this.handoffPending = true; this.active = false; this.generation++;
+      clearTimeout(this.timer); clearTimeout(this.deadlineTimer);
+      return data;
+    }
     async acquire(metadata = {}) {
       this.metadata = metadata;
+      this.handoffPending = false;
       this.active = true;
       const generation = ++this.generation;
       if (this.pending) {

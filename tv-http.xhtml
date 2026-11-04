@@ -12,139 +12,354 @@
     html, body { margin: 0; height: 100%; background: #000; color: #fff; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
     #wrap { position: fixed; inset: 0; display: flex; flex-direction: column; }
     video { flex: 1; width: 100%; background: #000; outline: none; }
-    #hud { position: absolute; left: 0; right: 0; bottom: 0; padding: 18px 22px; background: linear-gradient(transparent, rgba(0,0,0,.85)); display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
-    #title { font-size: 20px; font-weight: 700; margin: 0; flex: 1 1 240px; }
-    #status { flex-basis: 100%; font-size: 14px; opacity: .85; }
-    button { font: inherit; padding: 12px 18px; border-radius: 10px; border: 1px solid rgba(255,255,255,.25); background: rgba(255,255,255,.12); color: #fff; cursor: pointer; }
-    button:focus { outline: 3px solid #6ea8ff; }
-    #play { background: #2563eb; border-color: #2563eb; }
+    button, select, input { font: inherit; color: #fff; background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.25); border-radius: 10px; padding: 12px 16px; }
+    button { cursor: pointer; }
+    button:focus, select:focus, input:focus { outline: 3px solid #6ea8ff; }
+    button.primary { background: #2563eb; border-color: #2563eb; }
+    button:disabled { opacity: .45; cursor: default; }
+    #hud { position: absolute; left: 0; right: 0; bottom: 0; padding: 16px 20px; background: linear-gradient(transparent, rgba(0,0,0,.88)); display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    #title { font-size: 20px; font-weight: 700; margin: 0; flex: 1 1 220px; }
+    #status { flex-basis: 100%; font-size: 14px; opacity: .9; }
+    #quota { font-size: 13px; opacity: .85; }
+    #panel { position: absolute; top: 0; bottom: 0; left: 0; width: min(440px, 92vw); background: rgba(8,10,14,.96); border-right: 1px solid rgba(255,255,255,.15); padding: 16px; display: none; flex-direction: column; gap: 10px; z-index: 5; }
+    #panel.open { display: flex; }
+    #panel h2 { margin: 0 0 4px; font-size: 18px; }
+    #list { overflow: auto; flex: 1; display: flex; flex-direction: column; gap: 6px; }
+    .ch { text-align: left; width: 100%; padding: 12px; border-radius: 8px; }
+    .ch.active { background: #2563eb; border-color: #2563eb; }
+    .row { display: flex; gap: 8px; }
+    .row > * { flex: 1; }
+    #search, #category { width: 100%; }
+    #hint { font-size: 12px; opacity: .75; }
   /*]]>*/</style>
 </head>
 <body>
   <div id="wrap">
     <video id="video" controls="controls" playsinline="playsinline" preload="auto"></video>
+    <div id="panel">
+      <h2>Chaînes</h2>
+      <select id="category" aria-label="Bouquet"></select>
+      <input id="search" type="search" placeholder="Rechercher une chaîne" autocomplete="off" />
+      <div id="list"></div>
+      <button id="more" type="button">Afficher plus</button>
+      <button id="close" type="button">Fermer</button>
+      <div id="hint">La vidéo va directement du fournisseur à la TV. Vercel ne transporte pas la vidéo.</div>
+    </div>
     <div id="hud">
       <h1 id="title">Chaîne</h1>
-      <button id="play" type="button">Lecture</button>
+      <button id="channels" type="button">Chaînes</button>
+      <button id="prev" type="button">Précédente</button>
+      <button id="next" type="button">Suivante</button>
+      <button id="play" type="button" class="primary">Lecture</button>
       <button id="retry" type="button">Réessayer</button>
-      <button id="back" type="button">Retour à StreamPulse</button>
+      <button id="back" type="button">Retour</button>
+      <span id="quota"></span>
       <div id="status">Chargement…</div>
     </div>
   </div>
   <script>//<![CDATA[
   (function () {
     'use strict';
+    var XHTML = 'http://www.w3.org/1999/xhtml';
     var BACK_URL = 'https://streampulse-prive.vercel.app/';
     var video = document.getElementById('video');
     var title = document.getElementById('title');
     var status = document.getElementById('status');
+    var quota = document.getElementById('quota');
+    var panel = document.getElementById('panel');
+    var list = document.getElementById('list');
+    var category = document.getElementById('category');
+    var search = document.getElementById('search');
+    var more = document.getElementById('more');
     var playBtn = document.getElementById('play');
     var retryBtn = document.getElementById('retry');
     var backBtn = document.getElementById('back');
+    var prevBtn = document.getElementById('prev');
+    var nextBtn = document.getElementById('next');
+    var channelsBtn = document.getElementById('channels');
+    var closeBtn = document.getElementById('close');
     var hls = null;
     var mpegtsPlayer = null;
-    var current = null;
+    var payload = null;
+    var streams = [];
+    var filtered = [];
+    var visible = 100;
+    var currentId = null;
+    var currentStreamId = null;
+    var currentUrl = null;
+    var lease = null;
+    var offset = 0;
+    var renewTimer = null;
+    var deadlineTimer = null;
+    var active = false;
+    var generation = 0;
 
     function setStatus(text) { status.textContent = text; }
+    function minutes(seconds) {
+      var total = Math.max(0, Math.ceil(seconds / 60));
+      var h = Math.floor(total / 60), m = total % 60;
+      return h ? h + ' h' + (m ? ' ' + m : '') : m + ' min';
+    }
     function decodePayload() {
       try {
         var hash = location.hash.replace(/^#/, '');
         if (!hash) return null;
         hash = hash.replace(/-/g, '+').replace(/_/g, '/');
         while (hash.length % 4) hash += '=';
-        var json = decodeURIComponent(escape(atob(hash)));
-        var data = JSON.parse(json);
-        if (!data || typeof data.u !== 'string') return null;
-        if (!/^https?:\/\//i.test(data.u)) return null;
+        var data = JSON.parse(decodeURIComponent(escape(atob(hash))));
+        if (!data || typeof data.u !== 'string' || !/^https?:\/\//i.test(data.u)) return null;
         return data;
       } catch (e) { return null; }
     }
+    function api(action, body) {
+      if (!payload || !payload.token || !payload.api) return Promise.reject(new Error('Session TV manquante.'));
+      var options = { method: body ? 'POST' : 'GET', cache: 'no-store', headers: { Authorization: 'Bearer ' + payload.token } };
+      if (body) {
+        options.headers['Content-Type'] = 'application/json';
+        var merged = { action: action };
+        for (var k in body) merged[k] = body[k];
+        options.body = JSON.stringify(merged);
+      }
+      var url = payload.api + (body ? '' : '?action=' + encodeURIComponent(action));
+      return fetch(url, options).then(function (response) {
+        return response.json().catch(function () { return {}; }).then(function (data) {
+          if (!response.ok) {
+            var error = new Error(data.error || 'Contrôle TV indisponible.');
+            error.code = data.code; error.data = data; throw error;
+          }
+          return data;
+        });
+      });
+    }
+    function snapshot(data) {
+      if (data && data.policy && data.usage) {
+        quota.textContent = 'Jour : ' + minutes(data.usage.dayRemainingSeconds) + ' · Mois : ' + minutes(data.usage.monthRemainingSeconds);
+      }
+    }
     function loadScript(src) {
       return new Promise(function (resolve, reject) {
-        var s = document.createElement('script');
+        var s = document.createElementNS(XHTML, 'script');
         s.src = src;
         s.onload = resolve;
         s.onerror = function () { reject(new Error('script')); };
         document.head.appendChild(s);
       });
     }
-    function destroy() {
+    function destroyMedia() {
       try { if (hls) { hls.destroy(); hls = null; } } catch (e) {}
       try { if (mpegtsPlayer) { mpegtsPlayer.destroy(); mpegtsPlayer = null; } } catch (e) {}
       try { video.pause(); } catch (e) {}
       video.removeAttribute('src');
       try { video.load(); } catch (e) {}
     }
+    function clearTimers() {
+      if (renewTimer) clearTimeout(renewTimer);
+      if (deadlineTimer) clearTimeout(deadlineTimer);
+      renewTimer = null; deadlineTimer = null;
+    }
+    function release() {
+      if (!payload || !payload.token || !payload.api) return;
+      try {
+        fetch(payload.api, {
+          method: 'POST', keepalive: true, cache: 'no-store',
+          headers: { Authorization: 'Bearer ' + payload.token, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'release' })
+        }).catch(function () {});
+      } catch (e) {}
+    }
+    function stop(message) {
+      active = false; generation++; clearTimers(); destroyMedia(); release();
+      if (message) setStatus(message);
+    }
     function tryPlay() {
       var p = video.play();
       if (p && p.catch) p.catch(function () { setStatus('Appuyez sur Lecture pour démarrer.'); });
     }
-    function start() {
-      if (!current) return;
-      destroy();
-      var url = current.u;
-      title.textContent = current.t || 'Chaîne';
-      setStatus('Connexion au flux…');
+    function schedule() {
+      clearTimers();
+      if (!lease) return;
+      var remaining = lease.expiresAt - offset - Date.now();
+      if (remaining <= 0) { stop('Quota atteint : lecture arrêtée.'); return; }
+      renewTimer = setTimeout(renew, Math.max(500, remaining - 10000));
+      deadlineTimer = setTimeout(function () { stop('Quota atteint : lecture arrêtée.'); }, remaining + 100);
+    }
+    function leaseRequest(streamId) {
+      var body = {};
+      if (streamId != null && streamId !== '') body.streamId = streamId;
+      return api('lease', body).then(function (data) {
+        snapshot(data);
+        offset = data.lease.serverNow - Date.now();
+        lease = data.lease;
+        return data;
+      });
+    }
+    function renew() {
+      if (!active) return;
+      leaseRequest(currentStreamId).then(function () { schedule(); }).catch(function (error) {
+        stop(error.message || 'Lecture arrêtée : contrôle TV indisponible.');
+      });
+    }
+    function startVideo(url) {
+      destroyMedia();
+      currentUrl = url;
       var isHls = /\.m3u8(?:$|[?#])/i.test(url) || /\/hls\//i.test(url);
       var isTs = /\.ts(?:$|[?#])/i.test(url);
       var nativeHls = video.canPlayType('application/vnd.apple.mpegurl') || video.canPlayType('application/x-mpegURL');
-
-      if (isHls && nativeHls) {
-        video.src = url;
-        tryPlay();
-        return;
-      }
+      if (isHls && nativeHls) { video.src = url; tryPlay(); return; }
       if (isHls && window.Hls && window.Hls.isSupported()) {
         hls = new window.Hls({ maxBufferLength: 20, backBufferLength: 10 });
-        hls.loadSource(url);
-        hls.attachMedia(video);
+        hls.loadSource(url); hls.attachMedia(video);
         hls.on(window.Hls.Events.MANIFEST_PARSED, function () { tryPlay(); });
         hls.on(window.Hls.Events.ERROR, function (event, data) {
-          if (data && data.fatal) setStatus('Erreur HLS : ' + (data.details || 'flux indisponible') + '. Essayez Réessayer ou une autre chaîne.');
+          if (data && data.fatal) setStatus('Erreur HLS : ' + (data.details || 'flux indisponible') + '.');
         });
         return;
       }
       if (isTs && window.mpegts && window.mpegts.isSupported()) {
         mpegtsPlayer = window.mpegts.createPlayer({ type: 'mpegts', isLive: true, url: url }, { enableStashBuffer: false, lazyLoadMaxDuration: 10 });
-        mpegtsPlayer.attachMediaElement(video);
-        mpegtsPlayer.load();
-        tryPlay();
-        return;
+        mpegtsPlayer.attachMediaElement(video); mpegtsPlayer.load(); tryPlay(); return;
       }
-      video.src = url;
-      tryPlay();
+      video.src = url; tryPlay();
     }
-    function ensureLibsThenStart() {
-      var url = current.u;
+    function ensureLibs(url) {
       var isHls = /\.m3u8(?:$|[?#])/i.test(url) || /\/hls\//i.test(url);
       var isTs = /\.ts(?:$|[?#])/i.test(url);
       var nativeHls = video.canPlayType('application/vnd.apple.mpegurl') || video.canPlayType('application/x-mpegURL');
       var tasks = [];
       if (isHls && !nativeHls && !window.Hls) tasks.push(loadScript('https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js').catch(function () {}));
       if (isTs && !window.mpegts) tasks.push(loadScript('https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.js').catch(function () {}));
-      Promise.all(tasks).then(start, start);
+      return Promise.all(tasks);
+    }
+    function playChannel(item, fallbackUrl) {
+      var gen = ++generation;
+      active = false; clearTimers(); destroyMedia();
+      currentId = item && item.stream_id != null ? String(item.stream_id) : null;
+      currentStreamId = currentId;
+      title.textContent = (item && item.name) || payload.t || 'Chaîne';
+      setStatus('Autorisation et connexion au fournisseur…');
+      renderList();
+      leaseRequest(currentStreamId).then(function (data) {
+        if (gen !== generation) return;
+        var url = (data.urls && (data.urls.hls || data.urls.ts)) || fallbackUrl || currentUrl;
+        if (!url) throw new Error('Adresse de lecture manquante.');
+        active = true; schedule();
+        return ensureLibs(url).then(function () { if (gen === generation) startVideo(url); });
+      }).catch(function (error) {
+        if (gen !== generation) return;
+        snapshot(error.data);
+        stop(error.message || 'Lecture non autorisée.');
+      });
+    }
+    function isSeparator(name) { return /^#{3,}|^[-=]{3,}/.test(String(name || '')); }
+    function applyFilter() {
+      var cat = category.value || 'all';
+      var q = (search.value || '').trim().toLowerCase();
+      filtered = streams.filter(function (item) {
+        if (isSeparator(item.name)) return false;
+        if (cat !== 'all' && String(item.category_id) !== cat) return false;
+        if (q && String(item.name || '').toLowerCase().indexOf(q) === -1) return false;
+        return true;
+      });
+      visible = 100;
+      renderList();
+    }
+    function renderList() {
+      list.textContent = '';
+      var slice = filtered.slice(0, visible);
+      for (var i = 0; i < slice.length; i++) {
+        var item = slice[i];
+        var btn = document.createElementNS(XHTML, 'button');
+        btn.type = 'button';
+        btn.className = 'ch' + (currentId === String(item.stream_id) ? ' active' : '');
+        btn.textContent = item.name || ('Chaîne ' + item.stream_id);
+        btn.setAttribute('data-id', String(item.stream_id));
+        btn.addEventListener('click', function () {
+          var id = this.getAttribute('data-id');
+          var target = null;
+          for (var j = 0; j < streams.length; j++) if (String(streams[j].stream_id) === id) { target = streams[j]; break; }
+          if (target) { panel.classList.remove('open'); playChannel(target); }
+        });
+        list.appendChild(btn);
+      }
+      more.style.display = filtered.length > visible ? '' : 'none';
+      prevBtn.disabled = filtered.length === 0;
+      nextBtn.disabled = filtered.length === 0;
+    }
+    function loadCatalogue() {
+      return api('catalogue').then(function (data) {
+        streams = Array.isArray(data.streams) ? data.streams : [];
+        category.textContent = '';
+        var all = document.createElementNS(XHTML, 'option'); all.value = 'all'; all.textContent = 'Tous les bouquets'; category.appendChild(all);
+        var cats = Array.isArray(data.categories) ? data.categories : [];
+        for (var i = 0; i < cats.length; i++) {
+          var opt = document.createElementNS(XHTML, 'option');
+          opt.value = String(cats[i].category_id); opt.textContent = cats[i].category_name || 'Bouquet';
+          category.appendChild(opt);
+        }
+        if (payload.cat != null) category.value = String(payload.cat);
+        if (payload.q) search.value = payload.q;
+        applyFilter();
+      }).catch(function () { setStatus('Chaîne en cours. Catalogue indisponible : utilisez Retour pour changer de bouquet.'); });
+    }
+    function step(delta) {
+      if (!filtered.length) return;
+      var idx = -1;
+      for (var i = 0; i < filtered.length; i++) if (String(filtered[i].stream_id) === currentId) { idx = i; break; }
+      var next = idx < 0 ? (delta > 0 ? 0 : filtered.length - 1) : (idx + delta + filtered.length) % filtered.length;
+      playChannel(filtered[next]);
+    }
+    function goBack() {
+      release();
+      location.href = (payload && payload.back) || BACK_URL;
     }
 
-    playBtn.addEventListener('click', function () { tryPlay(); });
-    retryBtn.addEventListener('click', function () { ensureLibsThenStart(); });
-    backBtn.addEventListener('click', function () { location.href = BACK_URL; });
+    playBtn.addEventListener('click', function () {
+      if (active && !video.paused) { video.pause(); return; }
+      if (currentUrl && active) { tryPlay(); return; }
+      if (payload) playChannel({ stream_id: currentStreamId, name: title.textContent }, payload.u);
+    });
+    retryBtn.addEventListener('click', function () { if (payload) playChannel({ stream_id: currentStreamId, name: title.textContent }, currentUrl || payload.u); });
+    backBtn.addEventListener('click', goBack);
+    prevBtn.addEventListener('click', function () { step(-1); });
+    nextBtn.addEventListener('click', function () { step(1); });
+    channelsBtn.addEventListener('click', function () { panel.classList.toggle('open'); });
+    closeBtn.addEventListener('click', function () { panel.classList.remove('open'); });
+    more.addEventListener('click', function () { visible += 100; renderList(); });
+    category.addEventListener('change', applyFilter);
+    search.addEventListener('input', applyFilter);
     video.addEventListener('playing', function () { setStatus('Lecture en cours.'); });
     video.addEventListener('error', function () {
       var err = video.error;
-      setStatus('Erreur vidéo' + (err && err.code ? ' (code ' + err.code + ')' : '') + '. Le flux est peut-être incompatible ou le fournisseur bloque la lecture web.');
+      setStatus('Erreur vidéo' + (err && err.code ? ' (code ' + err.code + ')' : '') + '. Essayez Réessayer ou une autre chaîne.');
     });
+    document.addEventListener('visibilitychange', function () {
+      if (document.hidden && active) stop('Lecture arrêtée : lecteur TV en arrière-plan.');
+    });
+    window.addEventListener('pagehide', function () { clearTimers(); release(); });
     document.addEventListener('keydown', function (event) {
+      var tag = document.activeElement ? document.activeElement.tagName : '';
+      if (event.key === 'Backspace' || event.key === 'Escape') { event.preventDefault(); if (panel.classList.contains('open')) panel.classList.remove('open'); else goBack(); return; }
+      if (tag === 'INPUT' || tag === 'SELECT') return;
+      if (event.key === 'ArrowRight') { event.preventDefault(); step(1); }
+      if (event.key === 'ArrowLeft') { event.preventDefault(); step(-1); }
       if (event.key === 'Enter' && document.activeElement === document.body) tryPlay();
-      if (event.key === 'Backspace' || event.key === 'Escape') location.href = BACK_URL;
     });
 
-    current = decodePayload();
-    if (!current) {
+    payload = decodePayload();
+    if (!payload) {
       setStatus('Aucune chaîne reçue. Retournez à StreamPulse et choisissez une chaîne.');
       title.textContent = 'StreamPulse';
       return;
     }
-    ensureLibsThenStart();
+    if (!payload.token || !payload.api) {
+      setStatus('Session TV manquante. Retournez à StreamPulse et relancez la chaîne.');
+      return;
+    }
+    currentStreamId = payload.id != null ? String(payload.id) : null;
+    currentId = currentStreamId;
+    title.textContent = payload.t || 'Chaîne';
+    playChannel({ stream_id: currentStreamId, name: payload.t }, payload.u);
+    loadCatalogue();
   })();
   //]]></script>
 </body>

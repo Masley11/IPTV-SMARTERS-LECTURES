@@ -2,6 +2,7 @@ const { requireSession, rateLimit, ownerFor, usage, lease, LOCK_KEY } = require(
 const { getStore } = require('../lib/store');
 const { readPolicy } = require('../lib/policy');
 const { resolveBase, credentials, directUrls } = require('../lib/xtream');
+const { issueTvToken } = require('../lib/tv');
 
 function json(res, status, payload) {
   res.statusCode = status; res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -42,6 +43,16 @@ module.exports = async function handler(req, res) {
     try { body = await readBody(req); } catch { return json(res, 400, { error: 'JSON invalide ou trop volumineux.' }); }
     if (!body || typeof body !== 'object') return json(res, 400, { error: 'JSON invalide.' });
     const owner = ownerFor(token, body.viewerId);
+    if (body.action === 'tv_handoff') {
+      await rateLimit(`tv-handoff:${token.split('.')[1]}`, 20, 3600000);
+      let provider = null;
+      if (String(req.headers['x-iptv-username'] || '')) {
+        const { base, isLocked } = resolveBase(req.headers);
+        const auth = credentials(req.headers);
+        provider = { base: base.origin, username: auth.username, password: auth.password, isLocked };
+      }
+      return json(res, 200, await issueTvToken(token, body.viewerId, provider));
+    }
     if (body.action === 'lease') {
       let urls = null;
       if (body.streamId != null) {

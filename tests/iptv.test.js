@@ -7,14 +7,14 @@ process.env.ONDA_LOCAL_DEV = '1';
 process.env.APP_ACCESS_PASSWORD = 'test-password-private';
 process.env.SESSION_SECRET = 'test-session-secret-at-least-32-characters-long';
 process.env.XTREAM_SERVER = '';
-process.env.DAILY_WATCH_MINUTES = '120';
+process.env.DAILY_WATCH_MINUTES = '240';
 process.env.MONTHLY_WATCH_MINUTES = '2700';
 process.env.WATCH_START_HOUR_UTC = '0';
 process.env.WATCH_END_HOUR_UTC = '24';
 const { getStore, LocalStore } = require('../lib/store');
 const { createSession, verifySession } = require('../lib/session');
 const { readPolicy, quotaWindow, publicUsage } = require('../lib/policy');
-const handlers = { auth: require('../api/auth'), access: require('../api/access'), iptv: require('../api/iptv') };
+const handlers = { auth: require('../api/auth'), access: require('../api/access'), iptv: require('../api/iptv'), tv: require('../api/tv') };
 let middleware;
 test.before(async () => { middleware = (await import('../middleware.js')).default; });
 
@@ -35,13 +35,13 @@ test('signed sessions expire, reject tampering and require a strong secret', asy
 
 test('conservative quotas reset on UTC day/calendar month and never become negative', () => {
   const policy = readPolicy({});
-  assert.equal(policy.dailyMinutes, 120); assert.equal(policy.monthlyMinutes, 2700); assert.equal(policy.videoRoute, 'direct');
+  assert.equal(policy.dailyMinutes, 240); assert.equal(policy.monthlyMinutes, 2700); assert.equal(policy.videoRoute, 'direct');
   const now = Date.parse('2026-11-03T20:00:00Z');
   const window = quotaWindow(now, policy);
   assert.equal(window.windowStart, Date.parse('2026-11-03T06:00:00Z'));
   assert.equal(window.windowEnd, Date.parse('2026-11-04T00:00:00Z'));
   assert.equal(window.nextMonth, Date.parse('2026-12-01T00:00:00Z'));
-  assert.equal(publicUsage(7200000, 162000000, policy, now).dayRemainingSeconds, 0);
+  assert.equal(publicUsage(14400000, 162000000, policy, now).dayRemainingSeconds, 0);
   assert.throws(() => readPolicy({ DAILY_WATCH_MINUTES: '9999' }));
   assert.throws(() => readPolicy({ WATCH_START_HOUR_UTC: '22', WATCH_END_HOUR_UTC: '6' }));
 });
@@ -105,6 +105,8 @@ test('private HTTP gateway: auth, distributed pairing, quotas, metadata headers 
     const cookie = setCookie.split(';')[0];
     const allowed = await middleware(new Request(origin + '/', { headers: { cookie } }));
     assert.equal(allowed.headers.get('x-middleware-next'), '1');
+    const tvBypass = await middleware(new Request(origin + '/api/tv'));
+    assert.equal(tvBypass.headers.get('x-middleware-next'), '1');
     const headers = { Cookie: cookie, 'X-Iptv-Username': 'test', 'X-Iptv-Password': 'secret' };
     const categories = await fetch(origin + '/api/iptv?action=categories', { headers });
     assert.deepEqual(await categories.json(), [{ category_id: '1', category_name: 'Infos' }]);
@@ -125,6 +127,32 @@ test('private HTTP gateway: auth, distributed pairing, quotas, metadata headers 
     assert.equal(data.usage.dayUsedSeconds, 60); assert.equal(data.policy.videoRoute, 'direct');
     assert.equal((await post('/api/access', { action: 'lease', viewerId: viewerB }, cookie)).status, 409);
     assert.equal(videoCalls, 0, 'authorization never fetches video');
+
+    const handoff = await post('/api/access', { action: 'tv_handoff', viewerId: viewerA }, cookie);
+    assert.equal(handoff.status, 200);
+    const { token: tvToken } = await handoff.json();
+    assert.match(tvToken, /^[A-Za-z0-9_-]{43}$/);
+    const tvOrigin = 'http://raw.githack.com';
+    const preflight = await fetch(origin + '/api/tv', { method: 'OPTIONS', headers: { Origin: tvOrigin, 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'authorization,content-type' } });
+    assert.equal(preflight.status, 204);
+    assert.equal(preflight.headers.get('access-control-allow-origin'), tvOrigin);
+    const tvUsage = await fetch(origin + '/api/tv?action=usage', { headers: { Authorization: `Bearer ${tvToken}`, Origin: tvOrigin } });
+    assert.equal(tvUsage.status, 200);
+    assert.equal(tvUsage.headers.get('access-control-allow-origin'), tvOrigin);
+    const tvCatalogue = await fetch(origin + '/api/tv?action=catalogue', { headers: { Authorization: `Bearer ${tvToken}`, Origin: tvOrigin } });
+    assert.equal(tvCatalogue.status, 200);
+    assert.deepEqual(await tvCatalogue.json(), { categories: [{ category_id: '1', category_name: 'Infos' }], streams: [{ stream_id: 42, name: 'Info TV' }] });
+    const tvLease = await fetch(origin + '/api/tv', { method: 'POST', headers: { Authorization: `Bearer ${tvToken}`, Origin: tvOrigin, 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'lease', streamId: 42 }) });
+    assert.equal(tvLease.status, 200);
+    const tvData = await tvLease.json();
+    assert.equal(tvData.urls.hls, `${process.env.XTREAM_SERVER}/live/test/secret/42.m3u8`);
+    assert.equal(tvData.lease.chargedSeconds, 0, 'TV handoff reuses the same lease owner');
+    assert.equal(tvData.usage.dayUsedSeconds, 60);
+    const deniedOrigin = await fetch(origin + '/api/tv?action=usage', { headers: { Authorization: `Bearer ${tvToken}`, Origin: 'https://evil.example' } });
+    assert.equal(deniedOrigin.status, 403);
+    const tvRelease = await fetch(origin + '/api/tv', { method: 'POST', headers: { Authorization: `Bearer ${tvToken}`, Origin: tvOrigin, 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'release' }) });
+    assert.equal(tvRelease.status, 200);
+    assert.equal(videoCalls, 0, 'TV bridge never fetches video');
     for (const action of ['play', 'ts', 'resource']) assert.equal((await fetch(origin + '/api/iptv?action=' + action, { headers })).status, 410);
     assert.equal(videoCalls, 0);
 
@@ -142,6 +170,7 @@ test('private HTTP gateway: auth, distributed pairing, quotas, metadata headers 
     await post('/api/access', { action: 'release', viewerId: viewerB }, cookie);
     assert.equal((await post('/api/auth', { action: 'logout' }, cookie)).status, 200);
     assert.equal((await fetch(origin + '/api/access', { headers: { Cookie: cookie } })).status, 401, 'logout revokes server-side session');
+    assert.equal((await fetch(origin + '/api/tv?action=usage', { headers: { Authorization: `Bearer ${tvToken}`, Origin: tvOrigin } })).status, 401, 'logout revokes TV handoff token');
   } finally {
     await close(gateway); await close(upstream); process.env.XTREAM_SERVER = '';
   }

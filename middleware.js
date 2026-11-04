@@ -4,7 +4,7 @@ import { verifySession, sessionCookie } from './lib/session.js';
 // Only the private document and APIs invoke middleware. Versioned assets stay on the CDN.
 export default async function middleware(request) {
   const url = new URL(request.url);
-  if (url.pathname === '/api/auth') return next();
+  if (url.pathname === '/api/auth' || url.pathname === '/api/tv') return next();
   if (await verifySession(sessionCookie(request), process.env.SESSION_SECRET || '')) return next();
   const headers = { 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow, noarchive' };
   if (url.pathname.startsWith('/api/')) {

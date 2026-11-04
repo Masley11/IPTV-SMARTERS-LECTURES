@@ -5,14 +5,14 @@
 - **Vidéo directe obligatoire** : le navigateur parle directement au fournisseur IPTV. Les anciennes actions de relais `play`, `ts` et `resource` répondent `410`. Aucun segment vidéo ne transite par les fonctions Vercel.
 - **Espace privé** : mot de passe serveur, cookie signé HttpOnly/SameSite, expiration après 24 h et révocation à la déconnexion. Les identifiants IPTV vont dans des en-têtes, pas dans les URL de l’API.
 - **Une lecture à la fois** : verrou atomique Redis partagé entre téléviseur, téléphone et ordinateur. Une nouvelle fenêtre attend la fin de la minute réservée par l’autre fenêtre.
-- **Quotas serveur** : 120 minutes/jour, 2 700 minutes/mois (45 h), de 06:00 à minuit UTC. UTC correspond à l’heure du Burkina Faso. Les compteurs Redis sont atomiques, conservés entre les déploiements et indépendants de l’horloge du navigateur.
+- **Quotas serveur** : 240 minutes/jour (4 h), 2 700 minutes/mois (45 h), de 06:00 à minuit UTC. UTC correspond à l’heure du Burkina Faso. Les compteurs Redis sont atomiques, conservés entre les déploiements et indépendants de l’horloge du navigateur. Le lecteur TV HTTP externe utilise le même quota via `/api/tv`.
 - **Arrêt du lecteur** à l’expiration, à la pause, en arrière-plan et à la fermeture. Pas de reprise automatique en revenant dans l’application.
 - **Catalogue local 24 h**, EPG partagé 10 min/local 15 min, compte fournisseur limité à une requête toutes les 15 min. Pas de cron, télémétrie serveur, analytics payant ou optimisation d’images.
 - **Fichiers statiques versionnés** et cache local du navigateur. Seules les petites métadonnées et autorisations consomment Vercel.
 
 ### Limites importantes, sans promesse trompeuse
 
-1. Le fournisseur doit autoriser **HTTPS et la lecture web directe (CORS)**. Un fournisseur HTTP-only, limité à une application propriétaire ou interdisant CORS peut ne pas fonctionner. Le relais vidéo n’est **pas** réactivé automatiquement : cela protégerait mal le quota Vercel. Testez une chaîne avant toute utilisation prolongée.
+1. Dans l’application Vercel, le fournisseur doit autoriser **HTTPS et la lecture web directe (CORS)**. Pour les chaînes HTTP-only, utilisez le **lecteur TV HTTP externe** proposé par StreamPulse sur une Smart TV compatible : la page externe est en HTTP, la vidéo reste directe fournisseur → TV, et Vercel ne sert que les métadonnées/autorisations. Un fournisseur limité à une application propriétaire ou interdisant toute lecture web peut ne pas fonctionner. Le relais vidéo n’est **pas** réactivé automatiquement.
 2. Les quotas contrôlent l’autorisation et le lecteur fourni. Une URL directe déjà remise au navigateur ne peut pas être révoquée chez le fournisseur par Vercel. Un client volontairement modifié pourrait continuer à lire chez le fournisseur, **mais pas faire passer cette vidéo par Vercel**. Ce dispositif convient à un usage personnel honnête, pas à de la revente ou du DRM.
 3. Le temps est réservé par blocs de 60 secondes, renouvelés 10 secondes avant expiration. Le changement de chaîne réutilise le bloc courant. Un arrêt anticipé ne rembourse pas le temps réservé : le compteur est volontairement conservateur.
 4. Les quotas Redis sont en **mois calendaire UTC**, pas à la date anniversaire de votre compte Vercel. Les plafonds sont bien inférieurs aux ressources Hobby, mais les quotas Vercel sont partagés par **tous les projets du compte**. Aucun réglage applicatif ne peut garantir seul le quota d’un compte entier. Surveillez aussi les autres projets, domaines et déploiements.
@@ -20,7 +20,7 @@
 
 ## Réglages déjà fournis
 
-`vercel.json` choisit un site statique, trois petites fonctions Node.js à Paris (`cdg1`), 20 secondes maximum, 1 Gio de mémoire et Fluid Compute. Le middleware ne s’exécute que sur le document privé et les API, pas sur chaque image ou script. Le pare-feu applicatif limite les connexions et les requêtes authentifiées. Le build publie uniquement une liste explicite de fichiers ; les sources serveur, tests, anciennes pages et anciens relais ne sont pas des fichiers publics.
+`vercel.json` choisit un site statique, quatre petites fonctions Node.js à Paris (`cdg1`), 20 secondes maximum, 1 Gio de mémoire et Fluid Compute. Le middleware ne s’exécute que sur le document privé et les API, pas sur chaque image ou script. Le pare-feu applicatif limite les connexions et les requêtes authentifiées. Le build publie uniquement une liste explicite de fichiers ; les sources serveur, tests, anciennes pages et anciens relais ne sont pas des fichiers publics.
 
 ## Installation gratuite du compteur Redis
 
@@ -32,7 +32,7 @@ Le projet a besoin d’un stockage atomique partagé. **Ne pas utiliser un compt
 4. Connectez-la au projet pour les environnements Production et Preview. L’intégration ajoute les variables Redis ; les noms `UPSTASH_REDIS_REST_*` et `KV_REST_API_*` sont acceptés.
 5. Vérifiez que le plan de la base reste Free. Ne partagez pas cette base avec un service très fréquenté.
 
-À raison d’une autorisation par minute, 2 h/jour pendant 31 jours représentent environ 3 720 renouvellements, plus les connexions, consultations et associations QR. Cela reste très inférieur aux 500 000 commandes mensuelles du plan Redis gratuit consulté pendant la préparation. Les conditions du fournisseur peuvent évoluer.
+À raison d’une autorisation par minute, 4 h/jour pendant 31 jours représentent environ 7 440 renouvellements, plus les connexions, consultations, catalogues TV et associations QR. Cela reste très inférieur aux 500 000 commandes mensuelles du plan Redis gratuit consulté pendant la préparation. Les conditions du fournisseur peuvent évoluer.
 
 ## Variables privées à définir dans Vercel
 
@@ -45,7 +45,7 @@ Dans **Project → Settings → Environment Variables** :
 | `UPSTASH_REDIS_REST_URL` | Fournie par l’intégration Redis. |
 | `UPSTASH_REDIS_REST_TOKEN` | Fournie par l’intégration Redis ; secrète. |
 | `XTREAM_SERVER` | Recommandé : origine HTTPS de votre seul fournisseur, sans identifiant ni chemin. Facultatif pour choisir le fournisseur depuis Ma Playlist. |
-| `DAILY_WATCH_MINUTES` | `120` par défaut. |
+| `DAILY_WATCH_MINUTES` | `240` par défaut (4 h). |
 | `MONTHLY_WATCH_MINUTES` | `2700` par défaut. |
 | `WATCH_START_HOUR_UTC` | `6` par défaut. |
 | `WATCH_END_HOUR_UTC` | `24` par défaut (minuit). |
@@ -57,6 +57,17 @@ node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
 ```
 
 Ne réutilisez pas le mot de passe comme secret de session. Redéployez après modification des variables. En l’absence de Redis, de mot de passe valide ou de secret valide, la production refuse la connexion/lecture : **pas de contournement gratuit non sécurisé**.
+
+## Lecteur TV HTTP externe
+
+Quand une chaîne est en HTTP et que l’application est ouverte en HTTPS, StreamPulse propose **Regarder la chaîne** vers `tv-http.xhtml`, servi par raw.githack. Ce choix évite le blocage « mixed content » des navigateurs TV sans faire transiter la vidéo par Vercel.
+
+- La page externe reçoit un jeton TV opaque dans le fragment d’URL (`#...`), jamais envoyé au serveur statique. Le jeton expire avec la session (12 h maximum) et est révoqué à la déconnexion.
+- `/api/tv` ne sert que le catalogue, le quota et les autorisations de lecture. Il ne proxy aucun segment vidéo. La vidéo va directement du fournisseur IPTV vers la TV.
+- Le lecteur TV externe renouvelle le même verrou Redis que l’application : les quotas 4 h/jour et 45 h/mois s’appliquent aussi à la lecture HTTP externe.
+- Le lecteur TV externe garde les bouquets, la recherche, les chaînes précédente/suivante et un bouton Retour. Au retour, StreamPulse restaure le bouquet, la recherche et la chaîne sélectionnée.
+- Le catalogue TV est récupéré une fois par session TV, compressé quand le navigateur le demande. Les autorisations sont renouvelées environ une fois par minute. Pour 4 h/jour, cela reste de l’ordre de quelques milliers de petites requêtes par mois, sans vidéo.
+- La page externe est en HTTP : elle peut fonctionner sur certaines TV, mais n’offre pas la confidentialité d’HTTPS. N’y saisissez aucun mot de passe ; le jeton TV est limité et révocable. Si votre TV bloque HTTP, il n’y a pas de contournement Vercel gratuit sûr.
 
 ## Protection du domaine et accès TV
 

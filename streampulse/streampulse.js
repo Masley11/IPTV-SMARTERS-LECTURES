@@ -26,6 +26,7 @@
   const PROTO_STORAGE_KEY = 'sp-protocol-v1';
   const LAST_CH_STORAGE_KEY = 'sp-last-channel-v1';
   const ECO_STORAGE_KEY = 'sp-eco-mode-v1';
+  const TV_RETURN_KEY = 'sp-tv-return-v1';
   const HTTP_FALLBACK_BASE = 'http://raw.githack.com/Masley11/IPTV-SMARTERS-LECTURES/arena/bad0fe82-iptv-smarters-lectures/tv-http.xhtml';
 
   /* Pure vector SVG icon set — zero emojis or Unicode dingbats */
@@ -261,6 +262,7 @@
       this.protocol = this.readProtocol(); // 'auto' | 'hls' | 'ts'
       this.ecoMode = this.readEcoMode(); // Default 720p ceiling: saves provider/ISP data, not Vercel video traffic
       this.lastSavedChannelId = this.readLastChannelId();
+      this.pendingTvReturn = this.readTvReturnState();
 
       this.isLoadingCatalogue = false;
       this.catalogueError = '';
@@ -388,6 +390,57 @@
       const s = String(id || '');
       this.lastSavedChannelId = s;
       try { localStorage.setItem(LAST_CH_STORAGE_KEY, s); } catch { /* ignore */ }
+    }
+
+    readTvReturnState() {
+      try {
+        const raw = sessionStorage.getItem(TV_RETURN_KEY);
+        if (!raw) return null;
+        sessionStorage.removeItem(TV_RETURN_KEY);
+        const state = JSON.parse(raw);
+        if (!state || Date.now() - Number(state.ts || 0) > 30 * 60 * 1000) return null;
+        return state;
+      } catch { return null; }
+    }
+
+    saveTvReturnState() {
+      try {
+        const viewport = this.q('[data-sp="channelsViewport"]');
+        sessionStorage.setItem(TV_RETURN_KEY, JSON.stringify({
+          ts: Date.now(),
+          cat: this.selectedCat,
+          q: this.searchQuery,
+          tab: this.activeTab,
+          scroll: viewport ? viewport.scrollTop : 0,
+          channel: this.currentChannel ? String(this.currentChannel.stream_id) : ''
+        }));
+      } catch { /* ignore */ }
+    }
+
+    restoreTvReturnState() {
+      const state = this.pendingTvReturn;
+      if (!state || !this.streams.length) return;
+      this.pendingTvReturn = null;
+      this.activeTab = ['live', 'recents', 'favs'].includes(state.tab) ? state.tab : 'live';
+      this.selectedCat = state.cat != null ? String(state.cat) : 'all';
+      if (this.selectedCat !== 'all' && !this.categoryMap.has(this.selectedCat)) this.selectedCat = 'all';
+      this.searchQuery = String(state.q || '');
+      const input = this.q('[data-sp="searchInput"]');
+      if (input) input.value = state.q || '';
+      this.q('[data-sp="clearSearchBtn"]')?.classList.toggle('sp-hidden', !this.searchQuery);
+      this.setTab(this.activeTab);
+      this.updateBouquetTriggerLabel();
+      this.renderCategoryChips();
+      this.recomputeFiltered();
+      const idx = state.channel ? this.filtered.findIndex((c) => String(c.stream_id) === String(state.channel)) : -1;
+      if (idx >= 0) {
+        this.focusedVirtualIndex = idx;
+        this.scrollChannelIntoView(idx);
+      } else {
+        const viewport = this.q('[data-sp="channelsViewport"]');
+        if (viewport) viewport.scrollTop = Number(state.scroll || 0);
+        this.renderVirtualChannels();
+      }
     }
 
     q(sel) {
@@ -1277,6 +1330,7 @@
       this.updateBouquetTriggerLabel();
       this.renderCategoryChips();
       this.recomputeFiltered();
+      this.restoreTvReturnState();
       this.renderStandbyCard();
     }
 
@@ -2262,29 +2316,48 @@
       }
     }
 
-    offerHttpFallback(channel, playUrl) {
-      rootGlobal.ONDA_ACCESS?.stop('', false);
+    async offerHttpFallback(channel, playUrl) {
       this.destroyPlayer();
+      const token = this.sessionToken;
       this.setBuffering(false);
       const box = this.q('[data-sp="streamAlert"]');
       if (!box) return;
+      box.classList.remove('sp-hidden');
+      box.innerHTML = '<span style="flex:1">Préparation du lecteur TV HTTP…</span>';
       let fallback = '';
       try {
-        const json = JSON.stringify({ u: playUrl, t: channel && channel.name ? channel.name : 'Chaîne' });
+        if (!rootGlobal.ONDA_ACCESS?.tvHandoff) throw new Error('Contrôle TV indisponible. Rechargez StreamPulse.');
+        const handoff = await rootGlobal.ONDA_ACCESS.tvHandoff();
+        if (token !== this.sessionToken) return;
+        const json = JSON.stringify({
+          u: playUrl,
+          t: channel && channel.name ? channel.name : 'Chaîne',
+          id: channel && channel.stream_id != null ? String(channel.stream_id) : null,
+          token: handoff.token,
+          api: location.origin + '/api/tv',
+          back: location.origin + '/',
+          cat: this.selectedCat,
+          q: this.searchQuery
+        });
         const b64 = btoa(unescape(encodeURIComponent(json))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
         fallback = HTTP_FALLBACK_BASE + '#' + b64;
-      } catch { /* ignore */ }
+      } catch (error) {
+        rootGlobal.ONDA_ACCESS?.stop('', false);
+        this.setStreamAlert(error.message || 'Impossible de préparer le lecteur TV HTTP.', true);
+        return;
+      }
+      this.saveTvReturnState();
       box.classList.remove('sp-hidden');
       box.innerHTML = `
-        <span style="flex:1">Ce flux est en HTTP. Essayez d’abord la lecture directe, sinon le lecteur HTTP de secours.</span>
-        <button type="button" class="sp-btn sp-btn-primary" data-sp-http-direct="1">${ICONS.play}<span>Lecture directe</span></button>
-        ${fallback ? `<button type="button" class="sp-btn" data-sp-http-fallback="1">${ICONS.tv}<span>Lecteur HTTP</span></button>` : ''}
+        <span style="flex:1">Chaîne HTTP prête. Le lecteur TV garde les bouquets, la recherche et les chaînes précédente/suivante.</span>
+        <button type="button" class="sp-btn sp-btn-primary" data-sp-http-fallback="1">${ICONS.play}<span>Regarder la chaîne</span></button>
+        <button type="button" class="sp-btn" data-sp-http-direct="1">${ICONS.tv}<span>Lien direct</span></button>
         <button type="button" class="sp-btn" data-sp-retry="1">${ICONS.refresh}<span>Réessayer</span></button>
       `;
-      const directBtn = box.querySelector('[data-sp-http-direct]');
-      if (directBtn) directBtn.onclick = () => { location.href = playUrl; };
       const fallbackBtn = box.querySelector('[data-sp-http-fallback]');
       if (fallbackBtn) fallbackBtn.onclick = () => { location.href = fallback; };
+      const directBtn = box.querySelector('[data-sp-http-direct]');
+      if (directBtn) directBtn.onclick = () => { this.saveTvReturnState(); location.href = playUrl; };
       const retryBtn = box.querySelector('[data-sp-retry]');
       if (retryBtn) retryBtn.onclick = () => { if (this.currentChannel) this.playChannel(this.currentChannel, this.currentIndex); };
     }
