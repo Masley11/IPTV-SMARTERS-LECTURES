@@ -27,7 +27,7 @@
   const LAST_CH_STORAGE_KEY = 'sp-last-channel-v1';
   const ECO_STORAGE_KEY = 'sp-eco-mode-v1';
   const TV_RETURN_KEY = 'sp-tv-return-v1';
-  const HTTP_FALLBACK_BASE = 'http://raw.githack.com/Masley11/IPTV-SMARTERS-LECTURES/arena/bad0fe82-iptv-smarters-lectures/tv-http.xhtml';
+  const HTTP_FALLBACK_BASE = 'http://raw.githack.com/Masley11/IPTV-SMARTERS-LECTURES/de97fa5a7bc0df3b12cc50625c4a3a79cd497999/tv-http.xhtml';
 
   /* Pure vector SVG icon set — zero emojis or Unicode dingbats */
   const ICONS = {
