@@ -11,7 +11,6 @@ function json(res, status, data) {
 }
 function configured() {
   try {
-    if (!process.env.APP_ACCESS_PASSWORD || process.env.APP_ACCESS_PASSWORD.length < 8) return false;
     if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32) return false;
     readPolicy(); getStore(); return true;
   } catch { return false; }
@@ -37,6 +36,17 @@ module.exports = async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store'); res.setHeader('X-Content-Type-Options', 'nosniff');
   try {
     if (req.method === 'GET') {
+      const query = new URL(req.url, 'http://localhost').searchParams;
+      if (query.get('open') === '1') {
+        if (!configured()) return json(res, 503, { error: 'Service indisponible.', code: 'SETUP_REQUIRED' });
+        await rateLimit(`open:ip:${clientIP(req)}`, 100, 60000);
+        const token = await createSession(process.env.SESSION_SECRET);
+        await getStore().set(`onda:session:${hash(token)}`, '1', SESSION_TTL_MS);
+        res.setHeader('Set-Cookie', serializeSession(token, secureRequest(req)));
+        const requested = query.get('next') || '/';
+        const target = requested.startsWith('/') && !requested.startsWith('//') && !requested.includes('\\') && !/[\r\n]/.test(requested) ? requested : '/';
+        res.statusCode = 302; res.setHeader('Location', target); return res.end();
+      }
       const token = sessionCookie({ headers: { get: () => req.headers.cookie } });
       return json(res, 200, { configured: configured(), authenticated: await verifySession(token, process.env.SESSION_SECRET) });
     }
@@ -55,12 +65,6 @@ module.exports = async function handler(req, res) {
       }
       res.setHeader('Set-Cookie', serializeSession('', secureRequest(req), 0));
       return json(res, 200, { ok: true });
-    }
-    const supplied = crypto.createHash('sha256').update(String(data.password || '')).digest();
-    const expected = crypto.createHash('sha256').update(process.env.APP_ACCESS_PASSWORD).digest();
-    if (!crypto.timingSafeEqual(supplied, expected)) {
-      await new Promise(resolve => setTimeout(resolve, 350));
-      return json(res, 401, { error: 'Mot de passe incorrect.', code: 'INVALID_PASSWORD' });
     }
     const token = await createSession(process.env.SESSION_SECRET);
     await getStore().set(`onda:session:${hash(token)}`, '1', SESSION_TTL_MS);

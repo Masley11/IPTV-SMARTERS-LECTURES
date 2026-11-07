@@ -96,10 +96,12 @@ test('private HTTP gateway: auth, distributed pairing, quotas, metadata headers 
     assert.equal((await fetch(origin + '/api/access')).status, 401);
     assert.equal((await fetch(origin + '/api/iptv?action=streams')).status, 401);
     const denied = await middleware(new Request(origin + '/'));
-    assert.equal(denied.status, 302); assert.match(denied.headers.get('location'), /login\.html/);
-    assert.equal((await post('/api/auth', { password: 'wrong' })).status, 401);
-    const login = await post('/api/auth', { password: process.env.APP_ACCESS_PASSWORD });
-    assert.equal(login.status, 200);
+    assert.equal(denied.status, 302); assert.match(denied.headers.get('location'), /api\/auth\?open=1/);
+    const login = await fetch(origin + '/api/auth?open=1&next=%2F', { redirect: 'manual' });
+    assert.equal(login.headers.get('location'), '/');
+    const hostile = await fetch(origin + '/api/auth?open=1&next=%2F%2Fevil.test', { redirect: 'manual' });
+    assert.equal(hostile.headers.get('location'), '/');
+    assert.equal(login.status, 302);
     const setCookie = login.headers.get('set-cookie');
     assert.match(setCookie, /HttpOnly/); assert.match(setCookie, /SameSite=Strict/);
     const cookie = setCookie.split(';')[0];
@@ -124,8 +126,8 @@ test('private HTTP gateway: auth, distributed pairing, quotas, metadata headers 
     assert.equal(leased.status, 200);
     const data = await leased.json();
     assert.equal(data.urls.hls, `${process.env.XTREAM_SERVER}/live/test/secret/42.m3u8`);
-    assert.equal(data.usage.dayUsedSeconds, 60); assert.equal(data.policy.videoRoute, 'direct');
-    assert.equal((await post('/api/access', { action: 'lease', viewerId: viewerB }, cookie)).status, 409);
+    assert.equal(data.policy.unlimited, true); assert.equal(data.policy.videoRoute, 'direct');
+    assert.equal((await post('/api/access', { action: 'lease', viewerId: viewerB }, cookie)).status, 200);
     assert.equal(videoCalls, 0, 'authorization never fetches video');
 
     const handoff = await post('/api/access', { action: 'tv_handoff', viewerId: viewerA }, cookie);
@@ -147,7 +149,7 @@ test('private HTTP gateway: auth, distributed pairing, quotas, metadata headers 
     const tvData = await tvLease.json();
     assert.equal(tvData.urls.hls, `${process.env.XTREAM_SERVER}/live/test/secret/42.m3u8`);
     assert.equal(tvData.lease.chargedSeconds, 0, 'TV handoff reuses the same lease owner');
-    assert.equal(tvData.usage.dayUsedSeconds, 60);
+    assert.equal(tvData.policy.unlimited, true);
     const deniedOrigin = await fetch(origin + '/api/tv?action=usage', { headers: { Authorization: `Bearer ${tvToken}`, Origin: 'https://evil.example' } });
     assert.equal(deniedOrigin.status, 403);
     const tvRelease = await fetch(origin + '/api/tv', { method: 'POST', headers: { Authorization: `Bearer ${tvToken}`, Origin: tvOrigin, 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'release' }) });

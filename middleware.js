@@ -5,6 +5,7 @@ import { verifySession, sessionCookie } from './lib/session.js';
 export default async function middleware(request) {
   const url = new URL(request.url);
   if (url.pathname === '/api/auth' || url.pathname === '/api/tv') return next();
+  if (url.pathname === '/login.html') return Response.redirect(new URL('/', url), 302);
   if (await verifySession(sessionCookie(request), process.env.SESSION_SECRET || '')) return next();
   const headers = { 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow, noarchive' };
   if (url.pathname.startsWith('/api/')) {
@@ -12,7 +13,7 @@ export default async function middleware(request) {
       status: 401, headers: { ...headers, 'Content-Type': 'application/json; charset=utf-8' }
     });
   }
-  return new Response(null, { status: 302, headers: { ...headers, Location: '/login.html?next=' + encodeURIComponent(url.pathname + url.search) } });
+  return new Response(null, { status: 302, headers: { ...headers, Location: '/api/auth?open=1&next=' + encodeURIComponent(url.pathname + url.search) } });
 }
 
-export const config = { runtime: 'nodejs', matcher: ['/', '/index.html', '/api/:path*'] };
+export const config = { runtime: 'nodejs', matcher: ['/', '/index.html', '/login.html', '/api/:path*'] };

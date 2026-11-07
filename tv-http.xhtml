@@ -89,6 +89,7 @@
     var currentUrl = null;
     var lease = null;
     var offset = 0;
+    var unlimited = false;
     var renewTimer = null;
     var deadlineTimer = null;
     var active = false;
@@ -133,7 +134,7 @@
     }
     function snapshot(data) {
       if (data && data.policy && data.usage) {
-        quota.textContent = 'Jour : ' + minutes(data.usage.dayRemainingSeconds) + ' · Mois : ' + minutes(data.usage.monthRemainingSeconds);
+        quota.textContent = data.policy.unlimited ? 'Lecture sans quota StreamPulse' : 'Jour : ' + minutes(data.usage.dayRemainingSeconds) + ' · Mois : ' + minutes(data.usage.monthRemainingSeconds);
       }
     }
     function loadScript(src) {
@@ -177,7 +178,7 @@
     }
     function schedule() {
       clearTimers();
-      if (!lease) return;
+      if (!lease || unlimited) return;
       var remaining = lease.expiresAt - offset - Date.now();
       if (remaining <= 0) { stop('Quota atteint : lecture arrêtée.'); return; }
       renewTimer = setTimeout(renew, Math.max(500, remaining - 10000));
@@ -188,6 +189,7 @@
       if (streamId != null && streamId !== '') body.streamId = streamId;
       return api('lease', body).then(function (data) {
         snapshot(data);
+        unlimited = !!(data.policy && data.policy.unlimited);
         offset = data.lease.serverNow - Date.now();
         lease = data.lease;
         return data;

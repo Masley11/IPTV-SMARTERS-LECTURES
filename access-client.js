@@ -44,7 +44,7 @@
       let data;
       try { data = await response.json(); } catch { throw new Error('Le contrôle d’accès est indisponible.'); }
       if (response.status === 401 && path !== '/api/auth') {
-        location.replace('/login.html?next=' + encodeURIComponent(location.pathname + location.search));
+        location.replace('/api/auth?open=1&next=' + encodeURIComponent(location.pathname + location.search));
       }
       if (!response.ok) {
         if (data.policy && data.usage) this.accept(data);
@@ -104,6 +104,7 @@
     }
     schedule() {
       clearTimeout(this.timer); clearTimeout(this.deadlineTimer);
+      if (this.snapshot?.policy?.unlimited) return;
       const remaining = this.lease.expiresAt - this.offset - Date.now();
       if (remaining <= 0) { this.stop('Quota atteint : la lecture est arrêtée.'); return; }
       this.timer = setTimeout(() => this.renew(), Math.max(250, remaining - 10000));
@@ -143,6 +144,13 @@
       const mount = document.getElementById('streampulse-module');
       if (!mount) return;
       const s = this.snapshot;
+      if (s && s.policy.unlimited) {
+        const badge = mount.querySelector('[data-sp="budgetBadge"]');
+        if (badge) badge.textContent = 'Lecture illimitée';
+        const hours = mount.querySelector('[data-sp="budgetHours"]');
+        if (hours) hours.textContent = 'Lecture directe sans quota ni horaire imposé par StreamPulse.';
+        return;
+      }
       const badge = mount.querySelector('[data-sp="budgetBadge"]');
       if (badge) badge.textContent = s ? `${minutes(s.usage.dayRemainingSeconds)} restantes` : 'Mode privé';
       const day = mount.querySelector('[data-sp="budgetDay"]');

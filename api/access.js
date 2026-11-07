@@ -44,7 +44,6 @@ module.exports = async function handler(req, res) {
     if (!body || typeof body !== 'object') return json(res, 400, { error: 'JSON invalide.' });
     const owner = ownerFor(token, body.viewerId);
     if (body.action === 'tv_handoff') {
-      await rateLimit(`tv-handoff:${token.split('.')[1]}`, 20, 3600000);
       let provider = null;
       if (String(req.headers['x-iptv-username'] || '')) {
         const { base, isLocked } = resolveBase(req.headers);

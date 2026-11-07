@@ -1,3 +1,5 @@
+> **Attention : les consignes historiques de quotas et de mot de passe ci-dessous sont obsolètes.** Le site est désormais public et StreamPulse n’impose plus de quota, d’horaire ni de limite de lectures simultanées. Les limites du fournisseur restent applicables.
+
 # Déploiement privé et maîtrise de la consommation
 
 ## Ce qui est protégé

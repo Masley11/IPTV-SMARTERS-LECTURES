@@ -479,7 +479,7 @@
         </div>
 
         <div class="sp-top-actions">
-          <button type="button" class="sp-budget-pill sp-focusable" data-action="open-budget" title="Quota privé et économies de données">
+          <button type="button" class="sp-budget-pill sp-focusable" data-action="open-budget" title="Informations de lecture">
             <span class="sp-budget-dot"></span><span data-sp="budgetBadge">Mode privé</span>
           </button>
           <button type="button" class="sp-btn sp-btn-soft sp-focusable sp-hidden" data-action="install-pwa" data-sp="installBtn" title="Installer l'application StreamPulse">
@@ -743,14 +743,14 @@
       <div class="sp-modal-backdrop sp-hidden" data-sp="budgetModal" role="dialog" aria-modal="true" aria-label="Mon quota privé">
         <div class="sp-modal-card sp-budget-card">
           <div class="sp-modal-head"><h3>Votre espace, sous contrôle</h3><button type="button" class="sp-btn sp-btn-icon" data-action="close-budget" aria-label="Fermer">${ICONS.x}</button></div>
-          <p class="sp-budget-intro">Un seul utilisateur. Une seule lecture active. Des quotas partagés entre vos appareils, vérifiés côté serveur.</p>
-          <div class="sp-budget-row"><span>Aujourd’hui</span><strong data-sp="budgetDay">—</strong></div>
-          <div class="sp-budget-track"><i data-sp="budgetDayFill"></i></div>
-          <div class="sp-budget-row"><span>Ce mois-ci</span><strong data-sp="budgetMonth">—</strong></div>
-          <div class="sp-budget-track"><i data-sp="budgetMonthFill"></i></div>
+          <p class="sp-budget-intro">Aucun quota, horaire ni limite de lecture simultanée imposé par StreamPulse. Les limites de votre fournisseur restent applicables.</p>
+
+
+
+
           <p class="sp-budget-note" data-sp="budgetHours">Chargement du quota sécurisé…</p>
-          <p class="sp-budget-note">Le temps réservé est décompté par minute, même si vous arrêtez avant la fin. Une minute entamée n’est pas remboursée. La pause, la fermeture ou le passage en arrière-plan arrêtent les téléchargements.</p>
-          <div class="sp-budget-actions"><button type="button" class="sp-btn sp-btn-soft" data-action="site-logout">Verrouiller l’espace</button><button type="button" class="sp-btn sp-btn-primary" data-action="close-budget">Compris</button></div>
+          <p class="sp-budget-note">La vidéo est lue directement depuis votre fournisseur IPTV.</p>
+          <div class="sp-budget-actions"><button type="button" class="sp-btn sp-btn-primary" data-action="close-budget">Compris</button></div>
         </div>
       </div>
 
@@ -1726,7 +1726,7 @@
         return;
       }
 
-      this.setBuffering(true, 'Vérification de votre quota privé…');
+      this.setBuffering(true, 'Préparation de la lecture…');
       try {
         const urls = channel.directUrl
           ? await rootGlobal.ONDA_ACCESS.acquire()

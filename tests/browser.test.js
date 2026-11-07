@@ -27,7 +27,7 @@ async function boot(t, respond) {
 }
 const json = data => ({ ok: true, status: 200, json: async () => data });
 const snapshot = {
-  policy: { dailyMinutes: 240, monthlyMinutes: 2700, startHour: 6, endHour: 24, videoRoute: 'direct' },
+  policy: { unlimited: true, videoRoute: 'direct' },
   usage: { dayRemainingSeconds: 14400, monthRemainingSeconds: 162000, dayUsedSeconds: 0, monthUsedSeconds: 0, inWindow: true }
 };
 
@@ -44,7 +44,8 @@ test('private player boots, renders budget, and gates BOTH Xtream and raw M3U be
   });
   assert.equal(d.querySelectorAll('#streampulse-module .sp-ch-row').length, 0);
   d.querySelector('[data-action="open-budget"]').click();
-  assert.match(d.querySelector('[data-sp="budgetDay"]').textContent, /4 h restantes/);
+  assert.match(d.querySelector('[data-sp="budgetBadge"]').textContent, /Lecture illimitée/);
+  assert.match(d.querySelector('[data-sp="budgetHours"]').textContent, /sans quota/);
   assert.equal(d.querySelector('[data-sp="budgetModal"]').classList.contains('sp-hidden'), false);
   d.querySelector('[data-action="close-budget"]').click();
   const controller = w.StreamPulse.instance;
